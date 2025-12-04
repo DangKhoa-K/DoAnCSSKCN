@@ -1,4 +1,3 @@
-// app/(tabs)/care/_layout.js
 import { Stack } from 'expo-router';
 
 export default function CareLayout() {
@@ -10,11 +9,13 @@ export default function CareLayout() {
         headerTitleStyle: { fontWeight: '800' },
       }}
     >
-      <Stack.Screen name="index"     options={{ title: 'Chăm sóc' }} />
-      <Stack.Screen name="sleep"     options={{ title: 'Giấc ngủ' }} />
-      <Stack.Screen name="meds"      options={{ title: 'Thuốc & nhắc nhở' }} />
-      <Stack.Screen name="lifestyle" options={{ title: 'Sinh hoạt' }} />
-      <Stack.Screen name="progress"  options={{ title: 'Tiến độ sức khỏe' }} />
+      <Stack.Screen name="index"      options={{ title: 'Chăm sóc' }} />
+      <Stack.Screen name="sleep"      options={{ title: 'Giấc ngủ' }} />
+      <Stack.Screen name="meds"       options={{ title: 'Thuốc & nhắc nhở' }} />
+      <Stack.Screen name="lifestyle"  options={{ title: 'Sinh hoạt' }} />
+      <Stack.Screen name="progress"   options={{ title: 'Tiến độ sức khỏe' }} />
+      <Stack.Screen name="hydration"  options={{ title: 'Nước uống' }} />
+      <Stack.Screen name="reminders"  options={{ title: 'Nhắc nhở sức khỏe' }} />
     </Stack>
   );
 }

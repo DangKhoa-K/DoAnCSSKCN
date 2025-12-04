@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ScrollView, Text, View } from 'react-native';
+import { useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { RefreshControl, ScrollView, Text, View } from 'react-native';
 import { api } from '../../../src/lib/api';
 
 const C = { bg:'#F6F7FB', card:'#fff', b:'#e5e7eb', text:'#0f172a', sub:'#64748b', primary:'#2563eb' };
@@ -17,14 +18,33 @@ function Bar({label, val, max}) {
 
 export default function Progress(){
   const [w, setW] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  async function load(){ setW(await api('/api/workouts/progress?range=week').catch(()=>null)); }
-  useEffect(()=>{ load(); },[]);
+  const load = useCallback(async () => {
+    try {
+      const data = await api('/api/workouts/progress?range=week').catch(()=>null);
+      setW(data);
+    } catch (e) {
+      console.warn('Load progress error:', e);
+    }
+  }, []);
 
-  const maxMin = useMemo(()=>Math.max(1, ...(w?.bars||[]).map(d=>d.minutes)), [w]);
+  useEffect(()=>{ load(); },[load]);
+  useFocusEffect(useCallback(()=>{ load(); }, [load]));
+
+  const maxMin = useMemo(()=>Math.max(1, ...(w?.bars||[]).map(d=>d.minutes||0)), [w]);
 
   return (
-    <ScrollView style={{ flex:1, backgroundColor:C.bg, padding:16 }}>
+    <ScrollView
+      style={{ flex:1, backgroundColor:C.bg, padding:16 }}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={async()=>{
+          setRefreshing(true);
+          await load();
+          setRefreshing(false);
+        }}/>
+      }
+    >
       <Text style={{ fontSize:22, fontWeight:'800', color:C.text }}>Tiến độ tập luyện</Text>
       <Text style={{ color:C.sub, marginTop:4 }}>Tuần này: {w?.start} → {w?.end}</Text>
 
@@ -35,9 +55,10 @@ export default function Progress(){
         </Text>
         <View style={{ flexDirection:'row', gap:8, marginTop:12 }}>
           {(w?.bars||[]).map(d=>(
-            <Bar key={d.date} label={new Date(d.date).getDate()} val={d.minutes} max={maxMin} />
+            <Bar key={d.date} label={d.date?.slice(8,10)} val={d.minutes||0} max={maxMin} />
           ))}
         </View>
+        {(!w?.bars || w.bars.length===0) && <Text style={{ color:C.sub, marginTop:8 }}>Chưa có dữ liệu trong tuần.</Text>}
       </View>
 
       <View style={{ marginTop:12, backgroundColor:C.card, borderWidth:1,borderColor:C.b, borderRadius:12, padding:12 }}>
@@ -54,6 +75,7 @@ export default function Progress(){
               </View>
             </View>
           ))}
+          {Object.keys(w?.byMuscle||{}).length === 0 && <Text style={{ color:C.sub }}>Chưa có phân bố nhóm cơ.</Text>}
         </View>
       </View>
     </ScrollView>

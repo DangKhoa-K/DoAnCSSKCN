@@ -66,33 +66,6 @@ app.get('/api/foods', requireAuth, async (req, res) => {
   try {
     const kw = (req.query.search || '').toString().trim();
     const limit = Math.min(Number(req.query.limit || 30), 100);
-
-    // chuẩn hoá để tìm không dấu
-    const kwNorm = kw.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
-
-    let q = service
-      .from('foods')
-      .select('id,name_vi,portion_g,kcal,protein_g,carbs_g,fiber_g,fat_g,tags')
-      .order('name_vi', { ascending: true })
-      .limit(limit);
-
-    if (kw) q = q.or(`name_vi.ilike.%${kw}%,name_search.ilike.%${kwNorm}%`);
-
-    const { data, error } = await q;
-    if (error) throw error;
-    res.json(data || []);
-  } catch (e) {
-    console.error('GET /api/foods', e);
-    res.status(500).json({ error: 'Internal error' });
-  }
-});
-
-app.get('/api/foods', requireAuth, async (req, res) => {
-  try {
-    const kw = (req.query.search || '').toString().trim();
-    const limit = Math.min(Number(req.query.limit || 30), 100);
-
-    // chuẩn hoá không dấu (an toàn với Node 22)
     const kwNorm = kw.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
 
     let q = service
@@ -102,19 +75,22 @@ app.get('/api/foods', requireAuth, async (req, res) => {
       .limit(limit);
 
     if (kw) {
-      // Nếu DB CHƯA có cột name_search => comment dòng .or(...) và dùng 1 điều kiện ilike
+      // nếu chưa tạo name_search thì fallback sang ilike 1 trường
       q = q.or(`name_vi.ilike.%${kw}%,name_search.ilike.%${kwNorm}%`);
-      // q = q.ilike('name_vi', `%${kw}%`); // <-- fallback an toàn nếu name_search chưa tạo
+      // fallback:
+      // q = q.ilike('name_vi', `%${kw}%`);
     }
 
     const { data, error } = await q;
-    if (error) return res.status(400).json({ error: error.message });
+    if (error) throw error;
     res.json(data || []);
   } catch (e) {
-    console.error('GET /api/foods', e);
-    res.status(500).json({ error: e.message || 'Internal error' });
+    console.error('[GET /api/foods] error:', e);
+    res.status(400).json({ error: e.message || 'Internal error' });
   }
 });
+
+
 // ===== Foods: CREATE =====
 app.post('/api/foods', requireAuth, async (req, res) => {
   try {
@@ -441,15 +417,25 @@ app.get('/api/workouts/reminders', requireAuth, async (req, res) => {
 });
 
 app.post('/api/workouts/reminders', requireAuth, async (req, res) => {
-  const uid = req.uid;
-  const { time_of_day, dow = [1,2,3,4,5,6,7], note } = req.body || {};
-  if (!time_of_day) return res.status(400).json({ error: 'time_of_day required' });
-  const { data, error } = await service
-    .from('workout_reminders')
-    .insert({ uid, time_of_day, dow, note })
-    .select().single();
-  if (error) return res.status(400).json({ error: error.message });
-  res.json(data);
+  try {
+    const uid = req.uid;
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    const rows = Array.isArray(body) ? body : (body ? [body] : null);
+    if (!rows || rows.length === 0) return res.status(400).json({ error: 'expected JSON array' });
+
+    const payload = rows.map(r => ({
+      uid,
+      time_of_day: r.time_of_day,
+      note: r.note || null,
+      plan_id: r.plan_id || null,
+      dow: r.dow || null
+    }));
+
+    const ins = await service.from('workout_reminders').insert(payload).select();
+    if (ins.error) throw ins.error;
+
+    res.status(201).json(ins.data || []);
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 app.delete('/api/workouts/reminders/:id', requireAuth, async (req, res) => {
@@ -457,13 +443,6 @@ app.delete('/api/workouts/reminders/:id', requireAuth, async (req, res) => {
   const { error } = await service.from('workout_reminders').delete().eq('id', id);
   if (error) return res.status(400).json({ error: error.message });
   res.json({ ok: true });
-});
-
-
-app.get('/api/exercises', requireAuth, async (_req, res) => {
-  const { data, error } = await service.from('exercises').select('*').order('id');
-  if (error) return res.status(400).json({ error: error.message });
-  res.json(data);
 });
 
 app.post('/api/workouts/sessions', requireAuth, async (req, res) => {
@@ -503,7 +482,7 @@ app.post('/api/workouts/sessions', requireAuth, async (req, res) => {
     // 3) Cân nặng
     let w = Number(weight_kg);
     if (!Number.isFinite(w) || w <= 0) {
-      const prof = await service.from('profiles').select('weight_kg').eq('id', uid).maybeSingle();
+      const prof = await service.from('profiles').select('weight_kg').eq('uid', uid).maybeSingle();
       if (!prof.error && prof.data?.weight_kg) w = Number(prof.data.weight_kg);
     }
     if (!Number.isFinite(w) || w <= 0) w = 60; // fallback
@@ -674,34 +653,32 @@ app.get('/api/symptoms/today', requireAuth, async (req, res) => {
 // ===== CARE API (tối thiểu) =====
 app.get('/api/sleep/logs', requireAuth, async (req, res) => {
   try {
-    const uid = req.uid;
-    const date = (req.query.date || new Date().toISOString().slice(0,10)).toString();
-    const { data, error } = await service.from('sleep_logs')
-      .select('id,date,start_time,end_time,duration_min')
-      .eq('uid', uid)
-      .eq('date', date)
-      .order('id', { ascending:false });
-    if (error) throw error;
-    res.json(data || []);
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
+    const { date } = req.query;
+    const r = await service.from('sleep_logs')
+      .select('id,date,duration_min,start_time,end_time,quality,awake_count,note')
+      .eq('uid', req.uid)
+      .eq('date', date);
+    if (r.error) throw r.error;
+    res.json(r.data || []);
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 app.post('/api/sleep/logs', requireAuth, async (req, res) => {
   try {
-    const uid = req.uid;
-    const { date, duration_min, start_time, end_time } = JSON.parse(req.body || '{}');
-    if (!date || !duration_min) throw new Error('date & duration_min required');
-    const { data, error } = await service.from('sleep_logs')
-      .insert({ uid, date, duration_min, start_time, end_time })
-      .select()
-      .maybeSingle();
-    if (error) throw error;
-    res.json(data);
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
+    const b = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    const ins = await service.from('sleep_logs').insert({
+      uid: req.uid,
+      date: b.date,
+      duration_min: b.duration_min,
+      start_time: b.start_time || null,
+      end_time: b.end_time || null,
+      quality: b.quality || null,
+      awake_count: b.awake_count || null,
+      note: b.note || null
+    }).select().maybeSingle();
+    if (ins.error) throw ins.error;
+    res.status(201).json(ins.data);
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 app.get('/api/hydration/logs', requireAuth, async (req, res) => {
@@ -736,29 +713,62 @@ app.post('/api/hydration/logs', requireAuth, async (req, res) => {
 
 app.post('/api/medications', requireAuth, async (req, res) => {
   try {
-    const uid = req.uid;
-    const { date, name, dose } = JSON.parse(req.body || '{}');
-    if (!date || !name) throw new Error('date & name required');
-    const { data, error } = await service.from('medications')
-      .insert({ uid, date, name, dose: dose || null })
-      .select()
-      .maybeSingle();
-    if (error) throw error;
-    res.json(data);
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
+    const b = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    const ins = await service.from('medications').insert({
+      uid: req.uid,
+      name: b.name,
+      dose: b.dose || null,
+      schedule_time: b.schedule_time || null,
+      schedule_dows: b.schedule_dows || null,
+      active: true
+    }).select().maybeSingle();
+    if (ins.error) throw ins.error;
+    res.status(201).json(ins.data);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.post('/api/medications/logs', requireAuth, async (req, res) => {
+  try {
+    const b = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    const ins = await service.from('medication_logs').insert({
+      uid: req.uid,
+      med_id: b.med_id,
+      date: b.date,
+      status: b.status,
+      note: b.note || null
+    }).select().maybeSingle();
+    if (ins.error) throw ins.error;
+    res.status(201).json(ins.data);
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 app.get('/api/medications/today', requireAuth, async (req, res) => {
   try {
-    const uid = req.uid;
-    const date = (req.query.date || new Date().toISOString().slice(0,10)).toString();
-    const { data, error } = await service.from('medications')
-      .select('id,date,name,dose')
-      .eq('uid', uid).eq('date', date).order('id', { ascending:false });
-    if (error) throw error;
-    res.json(data || []);
+    const { date } = req.query;
+
+    // Lấy danh sách thuốc active
+    const medsR = await service.from('medications')
+      .select('id,name,dose,schedule_time,schedule_dows,active')
+      .eq('uid', req.uid)
+      .eq('active', true);
+    if (medsR.error) throw medsR.error;
+    const meds = medsR.data || [];
+
+    // Lấy trạng thái uống trong ngày từ medication_logs (nếu có)
+    const logsR = await service.from('medication_logs')
+      .select('med_id,status')
+      .eq('uid', req.uid)
+      .eq('date', date);
+    if (logsR.error) throw logsR.error;
+    const byMed = {};
+    for (const l of (logsR.data || [])) byMed[l.med_id] = l.status;
+
+    // Lọc theo day-of-week nếu có schedule_dows
+    const dow = ((new Date(date).getDay() + 6) % 7) + 1; // Mon=1..Sun=7
+    const result = meds
+      .filter(m => Array.isArray(m.schedule_dows) ? m.schedule_dows.includes(dow) : true)
+      .map(m => ({ ...m, taken: byMed[m.id] === 'taken' }));
+
+    res.json(result);
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -766,32 +776,29 @@ app.get('/api/medications/today', requireAuth, async (req, res) => {
 
 app.get('/api/health/notes', requireAuth, async (req, res) => {
   try {
-    const uid = req.uid;
-    const date = (req.query.date || new Date().toISOString().slice(0,10)).toString();
-    const { data, error } = await service.from('health_notes')
-      .select('id,date,note')
-      .eq('uid', uid).eq('date', date).order('id', { ascending:false });
-    if (error) throw error;
-    res.json(data || []);
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
+    const { date } = req.query;
+    const r = await service.from('health_notes')
+      .select('id,date,mood_score,stress_score,note')
+      .eq('uid', req.uid)
+      .eq('date', date);
+    if (r.error) throw r.error;
+    res.json(r.data || []);
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 app.post('/api/health/notes', requireAuth, async (req, res) => {
   try {
-    const uid = req.uid;
-    const { date, note } = JSON.parse(req.body || '{}');
-    if (!date || !note) throw new Error('date & note required');
-    const { data, error } = await service.from('health_notes')
-      .insert({ uid, date, note })
-      .select()
-      .maybeSingle();
-    if (error) throw error;
-    res.json(data);
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
+    const b = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    const ins = await service.from('health_notes').insert({
+      uid: req.uid,
+      date: b.date,
+      mood_score: b.mood_score || null,
+      stress_score: b.stress_score || null,
+      note: b.note || null
+    }).select().maybeSingle();
+    if (ins.error) throw ins.error;
+    res.status(201).json(ins.data);
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 
@@ -1045,6 +1052,373 @@ app.get('/api/progress/activity', requireAuth, async (req, res) => {
   if (error) return res.status(400).json({ error: error.message });
   res.json(data || []);
 });
+// ====== API GỢI Ý THỰC ĐƠN THÔNG MINH ======
+// Thay THAY ĐOẠN /api/recs/mealplan hiện tại bằng đoạn sau
+
+app.get('/api/recs/mealplan', requireAuth, async (req, res) => {
+  try {
+    const uid = req.uid;
+    const prof = await service
+      .from('profiles')
+      .select('height_cm,weight_kg,goal,kcal_target')
+      .eq('uid', uid)
+      .maybeSingle();
+
+    if (prof.error) throw prof.error;
+    const p = prof.data || {};
+    const h = Number(p.height_cm || 0);
+    const w = Number(p.weight_kg || 0);
+    if (!h || !w) {
+      return res.status(400).json({ error: 'Vui lòng cập nhật chiều cao và cân nặng' });
+    }
+
+    const goal = (p.goal || 'maintain').toLowerCase();
+    const kcalTarget = p.kcal_target && p.kcal_target > 0
+      ? Math.round(p.kcal_target)
+      : Math.round((goal === 'lose' ? 28 : goal === 'gain' ? 34 : 31) * w);
+
+    // Macro target ngày (đơn giản)
+    const ratio =
+      goal === 'gain' ? { p:0.25, c:0.45, f:0.30 } :
+      goal === 'lose' ? { p:0.35, c:0.35, f:0.30 } :
+                        { p:0.30, c:0.45, f:0.25 };
+    const target = {
+      p: Math.round((kcalTarget * ratio.p) / 4),
+      c: Math.round((kcalTarget * ratio.c) / 4),
+      f: Math.round((kcalTarget * ratio.f) / 9),
+    };
+
+    // Phân bổ kcal cho bữa
+    const mealDefs = [
+      { key:'breakfast', name:'Bữa sáng', portion:0.25 },
+      { key:'lunch',     name:'Bữa trưa', portion:0.35 },
+      { key:'dinner',    name:'Bữa tối',  portion:0.30 },
+      { key:'snack',     name:'Bữa phụ',  portion:0.10 },
+    ];
+
+    // Lấy toàn bộ foods
+    const foodsR = await service
+      .from('foods')
+      .select('id,name_vi,portion_g,kcal,protein_g,carbs_g,fiber_g,fat_g');
+    if (foodsR.error) throw foodsR.error;
+    const foods = (foodsR.data || []).filter(f => f.kcal && f.portion_g);
+
+    if (!foods.length) {
+      return res.status(400).json({ error: 'Chưa có dữ liệu món ăn' });
+    }
+
+    // Phân nhóm động
+    const groups = {
+      protein: [],
+      carb: [],
+      fiber: [],
+      energy: [],
+      balanced: []
+    };
+
+    for (const f of foods) {
+      const kcal = f.kcal;
+      const pG = f.protein_g || 0;
+      const cG = f.carbs_g || 0;
+      const fiG = f.fiber_g || 0;
+      const fatG = f.fat_g || 0;
+
+      const pRatio = pG*4 / (kcal || 1);
+      const cRatio = cG*4 / (kcal || 1);
+
+      // Quy tắc đơn giản
+      if (pG >= 8 && pRatio >= 0.25) groups.protein.push(f);
+      if (cG >= 15 || cRatio >= 0.40) groups.carb.push(f);
+      if (fiG >= 2 || (kcal <= 70 && pG < 6 && cG < 10)) groups.fiber.push(f);
+      if (fatG >= 10 || kcal >= 180) groups.energy.push(f);
+
+      // Balanced nếu có cả chút protein + carb
+      if (pG >= 5 && cG >= 10 && kcal <= 400) groups.balanced.push(f);
+    }
+
+    // Hàm trộn random nhẹ (Fisher-Yates)
+    function shuffle(arr) {
+      const a = [...arr];
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = (Math.random() * (i + 1)) | 0;
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+
+    // Score helper (jitter để thay đổi mỗi lần)
+    function scoreProtein(f) {
+      return ( (f.protein_g*4)/(f.kcal||1) ) + (f.fiber_g||0)*0.1 - (f.fat_g||0)*0.01 + Math.random()*0.3;
+    }
+    function scoreCarb(f) {
+      return ( (f.carbs_g*4)/(f.kcal||1) ) + (f.fiber_g||0)*0.05 + Math.random()*0.3;
+    }
+    function scoreFiber(f) {
+      return (f.fiber_g||0)*0.6 - (f.kcal||0)*0.002 + Math.random()*0.3;
+    }
+    function scoreBalanced(f) {
+      const p = f.protein_g||0, c = f.carbs_g||0;
+      const delta = Math.abs(p - c);
+      return ((p*4 + c*4)/(f.kcal||1))*0.5 + (f.fiber_g||0)*0.2 - delta*0.05 + Math.random()*0.3;
+    }
+
+    function pickSorted(group, scorer) {
+      return shuffle(group).sort((a,b) => scorer(b) - scorer(a));
+    }
+
+    const used = new Set();
+    const mealsOut = [];
+
+    for (const md of mealDefs) {
+      const kcalMeal = kcalTarget * md.portion;
+      const items = [];
+
+      // Template chọn theo bữa
+      if (md.key === 'breakfast') {
+        // Ưu tiên carb + protein + fiber
+        const carbList = pickSorted(groups.carb, scoreCarb);
+        const protList = pickSorted(groups.protein, scoreProtein);
+        const fibList  = pickSorted(groups.fiber, scoreFiber);
+
+        function take(list) {
+          for (const f of list) {
+            if (used.has(f.id)) continue;
+            used.add(f.id);
+            items.push(f);
+            return;
+          }
+        }
+        take(carbList);
+        take(protList);
+        take(fibList);
+        if (goal === 'gain' && items.length < 4) {
+          take(pickSorted(groups.energy, scoreBalanced));
+        }
+      } else if (md.key === 'lunch') {
+        const protList = pickSorted(groups.protein, scoreProtein);
+        const carbList = pickSorted(groups.carb, scoreCarb);
+        const fibList  = pickSorted(groups.fiber, scoreFiber);
+        const balList  = pickSorted(groups.balanced, scoreBalanced);
+
+        const order = [protList, carbList, fibList, balList];
+        for (const list of order) {
+          for (const f of list) {
+            if (items.length >= 3) break;
+            if (used.has(f.id)) continue;
+            used.add(f.id);
+            items.push(f);
+            break;
+          }
+        }
+      } else if (md.key === 'dinner') {
+        // Protein + Fiber + (gain → energy | maintain/lose → balanced hoặc carb nhỏ)
+        const protList = pickSorted(groups.protein, scoreProtein);
+        const fibList  = pickSorted(groups.fiber, scoreFiber);
+        const energyList = pickSorted(groups.energy, scoreBalanced);
+        const balList  = pickSorted(groups.balanced, scoreBalanced);
+        const carbList = pickSorted(groups.carb, scoreCarb);
+
+        function take(list) {
+          for (const f of list) {
+            if (used.has(f.id)) continue;
+            used.add(f.id);
+            items.push(f);
+            return;
+          }
+        }
+        take(protList);
+        take(fibList);
+        if (goal === 'gain') take(energyList);
+        else {
+          take(balList.length ? balList : carbList);
+        }
+      } else { // snack
+        // lose: protein/fiber; gain: energy + protein; maintain: balanced/protein
+        const protList = pickSorted(groups.protein, scoreProtein);
+        const fibList  = pickSorted(groups.fiber, scoreFiber);
+        const energyList = pickSorted(groups.energy, scoreBalanced);
+        const balList = pickSorted(groups.balanced, scoreBalanced);
+
+        function take(list) {
+          for (const f of list) {
+            if (used.has(f.id)) continue;
+            used.add(f.id);
+            items.push(f);
+            return;
+          }
+        }
+
+        if (goal === 'lose') {
+          take(protList);
+          take(fibList);
+        } else if (goal === 'gain') {
+          take(energyList);
+          take(protList);
+        } else {
+          take(balList);
+          take(protList);
+        }
+      }
+
+      // Tính tổng kcal hiện tại
+      let currentKcal = items.reduce((s,f)=>s + (f.kcal||0), 0);
+
+      // Scale nếu thiếu quá nhiều so với target (không scale rau cực nhỏ)
+      if (currentKcal < kcalMeal * 0.75 && currentKcal > 0) {
+        const scale = Math.min(1.6, kcalMeal / currentKcal); // tối đa nhân 1.6
+        currentKcal = 0;
+        for (let i=0;i<items.length;i++) {
+          const f = items[i];
+            const newGrams = Math.round((f.portion_g || 100) * scale);
+            // giữ nguyên macro chỉ cần quy đổi theo scale (cách đơn giản: nhân)
+            items[i] = {
+              ...f,
+              portion_g: newGrams,
+              _scaled: true
+            };
+            currentKcal += (f.kcal||0) * scale;
+        }
+      }
+
+      // Đưa sang format output
+      const outItems = items.map(f => ({
+        food: f.name_vi,
+        grams: Math.round(f.portion_g || 100),
+        kcal: Math.round(f.kcal || 0),
+        p: Math.round(f.protein_g || 0),
+        c: Math.round(f.carbs_g || 0),
+        f: Math.round(f.fat_g || 0),
+        fiber: Math.round(f.fiber_g || 0),
+        scaled: !!f._scaled
+      }));
+
+      mealsOut.push({ name: md.name, items: outItems });
+    }
+
+    res.json({
+      goal,
+      kcal_target: kcalTarget,
+      target,
+      meals: mealsOut
+    });
+  } catch (e) {
+    console.error('[mealplan improved] error:', e);
+    res.status(500).json({ error: e.message || 'Internal error' });
+  }
+});
+
+// ====== MEAL PLANS: Lưu/Đọc kế hoạch ======
+app.post('/api/nutrition/mealplans', requireAuth, async (req, res) => {
+  try {
+    const uid = req.uid;
+    const { title, goal, kcal_target, target, meals } = req.body;
+    
+    if (!title || !meals || !Array.isArray(meals)) {
+      return res.status(400).json({ error: 'title và meals bắt buộc' });
+    }
+    
+    // Tạo plan
+    const planR = await service.from('meal_plans').insert({
+      uid,
+      title: title.trim(),
+      goal: goal || 'maintain',
+      kcal_target: kcal_target || null,
+      protein_target: target?.p || null,
+      carbs_target: target?.c || null,
+      fat_target: target?.f || null,
+    }).select().single();
+    
+    if (planR.error) throw planR.error;
+    const planId = planR.data.id;
+    
+    // Lưu items
+    for (const meal of meals) {
+      if (!meal.name || !meal.items || !Array.isArray(meal.items)) continue;
+      
+      for (const item of meal.items) {
+        await service.from('meal_plan_items').insert({
+          plan_id: planId,
+          meal_type: meal.name,
+          food_name: item.food,
+          grams: item.grams || 100,
+          kcal: item.kcal || 0,
+          protein_g: item.p || 0,
+          carbs_g: item.c || 0,
+          fat_g: item.f || 0,
+        });
+      }
+    }
+    
+    res.json({ ok: true, id: planId, message: 'Đã lưu kế hoạch' });
+    
+  } catch (e) {
+    console.error('POST /api/nutrition/mealplans', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Lấy danh sách plans
+app.get('/api/nutrition/mealplans', requireAuth, async (req, res) => {
+  try {
+    const uid = req.uid;
+    const limit = Math.min(Number(req.query.limit || 50), 100); // KHAI BÁO 'limit'  <-- thêm dòng này
+
+    const { data, error } = await service
+      .from('meal_plans')
+      .select('id,title,goal,kcal_target,created_at')
+      .eq('uid', uid)
+      .order('created_at', { ascending: false })
+      .limit(limit); // DÙNG biến đã khai báo
+
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('GET /api/nutrition/mealplans error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Chi tiết 1 plan
+app.get('/api/nutrition/mealplans/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const uid = req.uid;
+    
+    const planR = await service.from('meal_plans')
+      .select('*')
+      .eq('id', id)
+      .eq('uid', uid)
+      .single();
+    
+    if (planR.error) throw planR.error;
+    
+    const itemsR = await service.from('meal_plan_items')
+      .select('*')
+      .eq('plan_id', id)
+      .order('id');
+    
+    if (itemsR.error) throw itemsR.error;
+    
+    // Group theo meal_type
+    const meals = {};
+    for (const item of itemsR.data || []) {
+      const type = item.meal_type || 'Khác';
+      if (!meals[type]) meals[type] = { name: type, items: [] };
+      meals[type].items.push({
+        food: item.food_name,
+        grams: item.grams,
+        kcal: item.kcal,
+        p: item.protein_g,
+        c: item.carbs_g,
+        f: item.fat_g,
+      });
+    }
+    
+    res.json({ ...planR.data, meals: Object.values(meals) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 
 const PORT = process.env.PORT || 8088;
@@ -1069,30 +1443,7 @@ function bmiCategory(bmi) {
   return 'béo phì';
 }
 
-// Lấy hồ sơ (kèm email)
-app.get('/api/profile', requireAuth, async (req, res) => {
-  try {
-    const uid = req.uid;
-    // đảm bảo có record
-    const up = await service.from('profiles').upsert(
-      { uid }, { onConflict: 'uid' }
-    ).select().single();
 
-    if (up.error && up.error.code !== '23505') throw up.error;
-
-    const { data, error } = await service
-      .from('profiles')
-      .select('uid,display_name,avatar_url,phone,height_cm,weight_kg,bmi,bmi_cat,updated_at')
-      .eq('uid', uid)
-      .maybeSingle();
-
-    if (error) throw error;
-    res.json({ ...(data||{}), email: req.user_email });
-  } catch (e) {
-    console.error('GET /api/profile', e);
-    res.status(400).json({ error: e.message });
-  }
-});
 
 // Cập nhật thể trạng (chiều cao/cân nặng) + tính BMI
 app.post('/api/profile/body', requireAuth, async (req, res) => {
@@ -1104,60 +1455,94 @@ app.post('/api/profile/body', requireAuth, async (req, res) => {
       phone: z.string().optional()
     }).parse(req.body);
 
-    const bmi = bmiOf(body.weight_kg, body.height_cm);
-    const cat = bmiCategory(bmi);
+    const h = body.height_cm;
+    const w = body.weight_kg;
+    const bmi = h && w ? Number((w / Math.pow(h / 100, 2)).toFixed(1)) : null;
+    let bmi_cat = null;
+    if (bmi != null) {
+      bmi_cat = bmi < 18.5 ? 'gầy'
+        : bmi < 23 ? 'bình thường'
+        : bmi < 27.5 ? 'thừa cân'
+        : 'béo phì';
+    }
 
-    const { data, error } = await service.from('profiles').upsert({
+    const up = await service.from('profiles').upsert({
       uid,
-      height_cm: body.height_cm,
-      weight_kg: body.weight_kg,
+      height_cm: h,
+      weight_kg: w,
+      bmi,
+      bmi_cat,
       phone: body.phone ?? null,
-      bmi: bmi,
-      bmi_cat: cat,
       updated_at: new Date().toISOString()
     }, { onConflict: 'uid' }).select().single();
+    if (up.error) throw up.error;
 
-    if (error) throw error;
-    res.json({ ...data, email: req.user_email });
+    // Ghi vào weight_logs để theo dõi lịch sử
+    await service.from('weight_logs').upsert({
+      uid,
+      date: new Date().toISOString().slice(0,10),
+      weight_kg: w
+    }, { onConflict: 'uid,date' });
+
+    res.json({ ...up.data, email: req.user_email });
   } catch (e) {
-    console.error('POST /api/profile/body', e);
+    console.error('[POST /api/profile/body] error:', e);
     res.status(400).json({ error: e.message });
   }
 });
 
 // ====== PROFILE & METRICS ======
+// HỢP NHẤT /api/profile — đặt ở vị trí cũ (xóa cả hai bản cũ trước)
 app.get('/api/profile', requireAuth, async (req, res) => {
-  const uid = req.uid;
-  let { data, error } = await service.from('profiles').select('*').eq('uid', uid).maybeSingle();
-  if (error) return res.status(400).json({ error: error.message });
-  if (!data) {
-    // tạo hồ sơ trống nếu chưa có
-    const ins = await service.from('profiles').insert({ uid }).select().single();
-    if (ins.error) return res.status(400).json({ error: ins.error.message });
-    data = ins.data;
-  }
-  // tính BMI & TDEE sơ bộ (server-side để nhất quán)
-  const h = Number(data.height_cm||0), w = Number(data.weight_kg||0);
-  const bmi = h>0 ? Number((w / Math.pow(h/100,2)).toFixed(1)) : null;
-  const act = data.activity_level || 'light';
-  const actMult = {sedentary:1.2, light:1.375, moderate:1.55, active:1.725, athlete:1.9}[act] || 1.375;
+  try {
+    const uid = req.uid;
+    const ensure = await service
+      .from('profiles')
+      .upsert({ uid }, { onConflict: 'uid' })
+      .select()
+      .maybeSingle();
+    if (ensure.error) throw ensure.error;
 
-  // Nếu thiếu tuổi/giới thì bỏ qua BMR, trả null
-  let tdee = null;
-  if (h>0 && w>0 && data.birth_year) {
-    const age = new Date().getUTCFullYear() - Number(data.birth_year);
-    const sex = data.sex || 'other';
-    // Mifflin-St Jeor (nếu 'other' thì dùng trung vị nam/nữ)
-    const s = sex==='male' ? 5 : sex==='female' ? -161 : (-78);
-    const bmr = 10*w + 6.25*h - 5*age + s;
-    tdee = Math.round(bmr * actMult);
+    const { data, error } = await service
+      .from('profiles')
+      .select('*')
+      .eq('uid', uid)
+      .maybeSingle();
+    if (error) throw error;
+
+    const h = Number(data?.height_cm || 0);
+    const w = Number(data?.weight_kg || 0);
+    const bmi = h && w ? Number((w / Math.pow(h / 100, 2)).toFixed(1)) : null;
+
+    const act = data.activity_level || 'light';
+    const actMult = {
+      sedentary: 1.2,
+      light: 1.375,
+      moderate: 1.55,
+      active: 1.725,
+      athlete: 1.9,
+    }[act] || 1.375;
+
+    let tdee = null;
+    if (bmi && data.birth_year && data.sex) {
+      const age = new Date().getUTCFullYear() - Number(data.birth_year);
+      const sexAdj = data.sex === 'male' ? 5 : data.sex === 'female' ? -161 : -78;
+      const bmr = 10 * w + 6.25 * h - 5 * age + sexAdj;
+      tdee = Math.round(bmr * actMult);
+    }
+
+    res.json({ ...data, bmi, tdee, email: req.user_email || null });
+  } catch (e) {
+    console.error('[GET /api/profile] error:', e);
+    res.status(400).json({ error: e.message });
   }
-  res.json({ ...data, bmi, tdee });
 });
 
+
 app.put('/api/profile', requireAuth, async (req, res) => {
-  const uid = req.uid;
   try {
+    const uid = req.uid;
+
     const body = z.object({
       display_name: z.string().optional(),
       phone: z.string().optional(),
@@ -1166,30 +1551,60 @@ app.put('/api/profile', requireAuth, async (req, res) => {
       sex: z.enum(['male','female','other']).optional(),
       birth_year: z.coerce.number().int().min(1900).max(new Date().getUTCFullYear()).optional(),
       activity_level: z.enum(['sedentary','light','moderate','active','athlete']).optional(),
-      goal: z.enum(['lose','maintain','gain']).optional()
+      goal: z.enum(['lose','maintain','gain']).optional(),
+      kcal_target: z.coerce.number().int().positive().optional()
     }).parse(req.body);
 
-    // upsert
-    const { data, error } = await service
+    // 1) Upsert các trường gửi lên
+    const up = await service
       .from('profiles')
       .upsert({ uid, ...body })
       .select()
       .single();
-    if (error) throw error;
+    if (up.error) throw up.error;
 
-    // ghi log cân nặng nếu có
+    // 2) Nếu có weight_kg mới → ghi log cân nặng trong ngày
     if (body.weight_kg) {
       await service.from('weight_logs').upsert({
         uid,
         date: new Date().toISOString().slice(0,10),
         weight_kg: body.weight_kg
-      });
+      }, { onConflict: 'uid,date' });
     }
 
-    // trả lại với BMI/TDEE như GET
-    req.body = body; // reuse
-    return app._router.handle({ ...req, method: 'GET', url: '/api/profile' }, res, () => {});
+    // 3) Đọc lại profile đầy đủ và tính BMI/TDEE để trả về
+    const prof = await service
+      .from('profiles')
+      .select('*')
+      .eq('uid', uid)
+      .maybeSingle();
+    if (prof.error) throw prof.error;
+
+    const data = prof.data || {};
+    const h = Number(data.height_cm || 0);
+    const w = Number(data.weight_kg || 0);
+    const bmi = h && w ? Number((w / Math.pow(h / 100, 2)).toFixed(1)) : null;
+
+    const act = data.activity_level || 'light';
+    const actMult = {
+      sedentary: 1.2,
+      light: 1.375,
+      moderate: 1.55,
+      active: 1.725,
+      athlete: 1.9,
+    }[act] || 1.375;
+
+    let tdee = null;
+    if (bmi && data.birth_year) {
+      const age = new Date().getUTCFullYear() - Number(data.birth_year);
+      const sexAdj = data.sex === 'male' ? 5 : data.sex === 'female' ? -161 : -78;
+      const bmr = 10 * w + 6.25 * h - 5 * age + sexAdj;
+      tdee = Math.round(bmr * actMult);
+    }
+
+    return res.json({ ...data, bmi, tdee, email: req.user_email || null });
   } catch (e) {
+    console.error('PUT /api/profile error:', e);
     return res.status(400).json({ error: e.message || 'Invalid data' });
   }
 });
@@ -1258,114 +1673,200 @@ app.get('/api/recs/foods', requireAuth, async (req, res) => {
 
 // ====== RECOMMENDATIONS: WORKOUTS ======
 app.get('/api/recs/workouts', requireAuth, async (req, res) => {
-  const uid = req.uid;
-  const prof = await service.from('profiles').select('*').eq('uid', uid).maybeSingle();
-  const p = prof.data || {};
-  const h = Number(p.height_cm||0), w = Number(p.weight_kg||0);
-  const bmi = h>0 ? (w/Math.pow(h/100,2)) : null;
-  const goal = p.goal || 'maintain';
-  const act  = p.activity_level || 'light';
-
-  // đích phút/ngày (đơn giản hóa theo BMI/goal)
-  let minutes = 30;
-  if (goal==='lose') minutes = 45;
-  if (bmi && bmi>=27) minutes = 50;
-  if (bmi && bmi<18.5 && goal!=='lose') minutes = 25;
-
-  // cường độ mục tiêu (MET)
-  let metMin=3, metMax=8;
-  if (goal==='lose' || (bmi&&bmi>=27)) { metMin=4; metMax=9; }
-
-  const ex = await service.from('exercises').select('id,name,met,note').order('met',{ascending:true});
-  if (ex.error) return res.status(400).json({ error: ex.error.message });
-
-  const light   = (ex.data||[]).filter(e=>e.met>=2.5 && e.met<4.5).slice(0,8);
-  const medium  = (ex.data||[]).filter(e=>e.met>=4.5 && e.met<7.5).slice(0,8);
-  const vigorous= (ex.data||[]).filter(e=>e.met>=7.5).slice(0,8);
-
-  res.json({
-    plan: { minutes_target: minutes, met_range: [metMin,metMax], days_per_week: 5 },
-    buckets: { light, medium, vigorous }
-  });
-});
-// ===== PROGRESS (week/month) =====
-app.get('/api/workouts/progress', requireAuth, async (req, res) => {
   try {
     const uid = req.uid;
-    const range = (req.query.range || 'week').toString(); // week | month
+    const variant = (req.query.variant || 'balanced').toString().toLowerCase(); // cardio|strength|balanced
 
-    const today = new Date();
-    const start = new Date(today);
-    if (range === 'month') start.setDate(1);
-    else {
-      const d = (today.getDay() + 6) % 7; // Mon=0..Sun=6
-      start.setDate(today.getDate() - d);
-    }
-    start.setHours(0,0,0,0);
-    const end = new Date(start);
-    if (range === 'month') end.setMonth(start.getMonth()+1);
-    else end.setDate(start.getDate()+7);
-    const startIso = start.toISOString();
-    const endIso = end.toISOString();
-
-    // sessions in range
-    const ss = await service
-      .from('workout_sessions')
-      .select('date, duration_min, calories, exercise_id')
+    const profR = await service
+      .from('profiles')
+      .select('height_cm,weight_kg,goal,sex,birth_year,activity_level')
       .eq('uid', uid)
-      .gte('date', startIso.slice(0,10))
-      .lt('date', endIso.slice(0,10));
+      .maybeSingle();
+    if (profR.error) throw profR.error;
+    const p = profR.data || {};
 
-    if (ss.error) throw ss.error;
+    const h = Number(p.height_cm || 0);
+    const w = Number(p.weight_kg || 0);
+    const goal = (p.goal || 'maintain').toLowerCase();
+    const act = (p.activity_level || 'light').toLowerCase();
+    const age = p.birth_year ? (new Date().getUTCFullYear() - Number(p.birth_year)) : null;
+    const sexAdj = p.sex === 'male' ? 5 : p.sex === 'female' ? -161 : -78;
+    const actFactor = {
+      sedentary: 1.2, light: 1.375, moderate: 1.55, active: 1.725, athlete: 1.9
+    }[act] || 1.375;
 
-    // Tổng hợp theo ngày
-    const days = {};
-    for (let d=new Date(start); d<end; d.setDate(d.getDate()+1)) {
-      const key = d.toISOString().slice(0,10);
-      days[key] = { date:key, minutes:0, calories:0 };
+    let bmr = null, tdee = null;
+    if (h && w && age && p.sex) {
+      bmr = Math.round(10*w + 6.25*h - 5*age + sexAdj);
+      tdee = Math.round(bmr * actFactor);
     }
-    let totalMinutes = 0, totalCalories = 0;
-    (ss.data||[]).forEach(r=>{
-      const k = (typeof r.date==='string'? r.date : new Date(r.date).toISOString()).slice(0,10);
-      if (!days[k]) days[k] = { date:k, minutes:0, calories:0 };
-      days[k].minutes += Number(r.duration_min||0);
-      days[k].calories += Number(r.calories||0);
-      totalMinutes += Number(r.duration_min||0);
-      totalCalories += Number(r.calories||0);
-    });
+    // Fallback TDEE nếu thiếu
+    if (!tdee) {
+      tdee = Math.round((24 * w) * actFactor);
+      bmr = Math.round(24 * w * 0.7); // gần đúng
+    }
 
-    // nhóm cơ (dựa trên sessions join exercises)
-    const sessIds = (ss.data||[]).map(s=>s.exercise_id).filter(Boolean);
-    let byMuscle = {};
-    if (sessIds.length) {
-      const ex = await service.from('exercises')
-        .select('id,muscle_group')
-        .in('id', sessIds);
-      if (ex.error) throw ex.error;
-      const map = Object.fromEntries((ex.data||[]).map(e=>[e.id, e.muscle_group || 'other']));
-      (ss.data||[]).forEach(s=>{
-        const g = map[s.exercise_id] || 'other';
-        byMuscle[g] = (byMuscle[g]||0) + Number(s.duration_min||0);
+    // Calories IN target (nạp)
+    const deltaGoal = goal === 'lose' ? -300 : goal === 'gain' ? 300 : 0;
+    const dailyConsumeTarget = tdee + deltaGoal;
+
+    // Daily burn target
+    let focus = goal === 'lose' ? 0.65 : goal === 'gain' ? 0.45 : 0.55;
+    let dailyBurnTarget;
+    if (bmr) {
+      dailyBurnTarget = Math.round((tdee - bmr) * focus);
+    } else {
+      const baseMul = goal === 'lose' ? 6 : goal === 'gain' ? 4 : 5;
+      dailyBurnTarget = Math.round(w * baseMul);
+    }
+    if (dailyBurnTarget < 120) dailyBurnTarget = 120; // sàn
+
+    // BMI class (cho đa dạng lịch)
+    let bmiClass = 'normal';
+    if (h && w) {
+      const bmi = w / Math.pow(h/100, 2);
+      if (bmi < 18.5) bmiClass = 'under';
+      else if (bmi >= 27) bmiClass = 'over';
+      else if (bmi >= 25) bmiClass = 'over';
+    }
+
+    // Lấy toàn bộ exercises
+    const exR = await service
+      .from('exercises')
+      .select('id,name,muscle_group,category,equipment,met,recommend')
+      .limit(600);
+    if (exR.error) throw exR.error;
+    const all = (exR.data || []).filter(x => x.id);
+
+    // Phân nhóm
+    const byCat = {};
+    for (const e of all) {
+      const k = (e.category || 'other').toLowerCase();
+      (byCat[k] || (byCat[k] = [])).push(e);
+    }
+    function shuffle(a) {
+      const s = [...a];
+      for (let i=s.length-1;i>0;i--){
+        const j = (Math.random()*(i+1))|0;
+        [s[i],s[j]]=[s[j],s[i]];
+      }
+      return s;
+    }
+
+    // Chọn danh mục ưu tiên theo variant
+    let primaryCatOrder;
+    if (variant === 'cardio')      primaryCatOrder = ['cardio','strength','stretch','yoga'];
+    else if (variant === 'strength') primaryCatOrder = ['strength','cardio','stretch','yoga'];
+    else                            primaryCatOrder = ['strength','cardio','core','stretch','yoga','fullbody'];
+
+    // Template ngày (có thể điều chỉnh theo goal/bmiClass)
+    let template = [
+      { title:'Ngày 1: Upper / Strength', focus:'strength' },
+      { title:'Ngày 2: Cardio / Intervals', focus:'cardio' },
+      { title:'Ngày 3: Lower / Strength', focus:'strength' },
+      { title:'Ngày 4: Core + Cardio nhẹ', focus:'core' },
+      { title:'Ngày 5: Fullbody', focus:'strength' },
+      { title:'Ngày 6: Cardio + Stretch', focus:'cardio' },
+      { title:'Ngày 7: Stretch/Yoga phục hồi', focus:'stretch' },
+    ];
+    if (goal === 'lose' || bmiClass === 'over') {
+      template[2] = { title:'Ngày 3: Cardio dài + Lower nhẹ', focus:'cardio' };
+    } else if (goal === 'gain' || bmiClass === 'under') {
+      template[5] = { title:'Ngày 6: Upper phụ + Core', focus:'strength' };
+    }
+
+    const usedIds = new Set();
+    function pickExercises(cat, n) {
+      const list = shuffle(byCat[cat] || []);
+      const out = [];
+      for (const e of list) {
+        if (out.length >= n) break;
+        if (usedIds.has(e.id)) continue;
+        usedIds.add(e.id);
+        out.push(e);
+      }
+      return out;
+    }
+
+    // Ước tính thời lượng mỗi bài (dựa recommend hoặc default)
+    function durationOf(e, defaultCardio=20, defaultStrength=12) {
+      const rec = typeof e.recommend === 'string'
+        ? (JSON.parse(e.recommend || '{}') || {})
+        : (e.recommend || {});
+      if ((e.category||'').toLowerCase() === 'cardio') {
+        return Number(rec.duration_min || defaultCardio);
+      }
+      const sets = Number(rec.sets || 3);
+      const reps = Number(rec.reps || 12);
+      const rest = Number(rec.rest_sec || 60);
+      // 5s/rep + rest
+      const perSet = (reps*5)/60 + rest/60;
+      return Math.max(8, Math.round(sets * perSet)); // phút
+    }
+
+    // Tạo lịch
+    const days = [];
+    let dow = 1;
+    for (const t of template) {
+      let dailyList = [];
+      // Quy tắc số bài:
+      const isCardio = t.focus === 'cardio';
+      const count = isCardio ? 2 : 3;
+      if (t.focus === 'core') {
+        dailyList = pickExercises('strength', 2).concat(pickExercises('core',1));
+      } else if (t.focus === 'stretch') {
+        dailyList = pickExercises('stretch', 2).concat(pickExercises('yoga',1));
+      } else if (t.focus === 'cardio') {
+        dailyList = pickExercises('cardio', count);
+        if (dailyList.length < count) dailyList = dailyList.concat(pickExercises('strength', count - dailyList.length));
+      } else {
+        dailyList = pickExercises('strength', count);
+        if (dailyList.length < count) dailyList = dailyList.concat(pickExercises('cardio', count - dailyList.length));
+      }
+
+      // Tính tổng kcal ước tính cho buổi (theo MET)
+      let totalWorkoutCalories = 0;
+      const items = dailyList.map(e => {
+        const minutes = durationOf(e);
+        const met = Number(e.met || 5);
+        const calories = Math.round(met * 3.5 * w / 200 * minutes); // công thức MET
+        totalWorkoutCalories += calories;
+        return {
+          exercise_id: e.id,
+          name: e.name,
+          category: e.category,
+          minutes,
+          met,
+          calories
+        };
       });
+
+      days.push({
+        dow,
+        note: t.title,
+        calories_est: totalWorkoutCalories,
+        items
+      });
+      dow = (dow % 7) + 1;
     }
 
-    // số buổi trong tuần hiện tại
-    const weekStart = new Date();
-    weekStart.setDate(today.getDate() - ((today.getDay()+6)%7));
-    const weekKeyStart = weekStart.toISOString().slice(0,10);
-    const thisWeekCount = (ss.data||[]).filter(r => r.date >= weekKeyStart).length;
+    const weeklyCaloriesEst = days.reduce((s,d)=>s+d.calories_est,0);
 
     res.json({
-      range,
-      start: startIso.slice(0,10),
-      end: endIso.slice(0,10),
-      totalMinutes, totalCalories,
-      sessionsThisWeek: thisWeekCount,
-      bars: Object.values(days),        // [{date,minutes,calories}]
-      byMuscle                           // {chest: 80, back: 40, ...} (tính theo phút)
+      goal,
+      bmiClass,
+      variant,
+      bmr,
+      tdee,
+      daily_consume_target: dailyConsumeTarget,
+      daily_burn_target: dailyBurnTarget,
+      weekly_burn_target: dailyBurnTarget * 5,
+      weekly_calories_est: weeklyCaloriesEst,
+      days
     });
   } catch (e) {
-    res.status(400).json({ error: e.message });
+    console.error('[GET /api/recs/workouts v2] error:', e);
+    res.status(400).json({ error: e.message || 'Internal error' });
   }
 });
 // ===== EXERCISES: search + filter =====
@@ -1379,53 +1880,76 @@ const toList = v =>
 const norm = s => String(s || '').trim().toLowerCase();
 
 // ===== DB-ONLY FILTER (không dùng catalog) =====
+// Route duy nhất cho /api/exercises (lọc + tìm kiếm)
 app.get('/api/exercises', requireAuth, async (req, res) => {
   try {
-    // client gửi: muscle, category, equipment, level, q, goal (goal là optional)
     const q         = (req.query.q || '').toString().trim();
-    const muscle    = (req.query.muscle || '').toString().trim();      // ex: back
-    const category  = (req.query.category || '').toString().trim();    // strength|cardio|yoga...
-    const equipment = (req.query.equipment || '').toString().trim();   // machine|cable|...
-    const level     = (req.query.level || '').toString().trim();       // beginner|...
-    const goal      = (req.query.goal || '').toString().trim();        // nếu bảng bạn KHÔNG có cột goals, sẽ bị bỏ qua
+    const muscle    = (req.query.muscle || '').toString().trim();       // back, chest...
+    const category  = (req.query.category || '').toString().trim();     // strength|cardio|yoga|stretching
+    const equipment = (req.query.equipment || '').toString().trim();    // machine|dumbbell|...
+    const level     = (req.query.level || '').toString().trim();        // beginner|intermediate|advanced
+    const goal      = (req.query.goal || '').toString().trim();         // nếu sau này có cột goal
 
-    // Query phần chắc chắn bằng SQL
-    let qb = service.from('exercises')
+    // Map 'stretching' -> 'stretch' nếu DB lưu 'stretch'
+    const catNorm = category.toLowerCase() === 'stretching' ? 'stretch' : category.toLowerCase();
+
+    let qb = service
+      .from('exercises')
       .select('id,name,met,level,cues,note,muscle_group,category,equipment,recommend');
 
-    if (q)        qb = qb.ilike('name', `%${q}%`);
-    if (muscle)   qb = qb.ilike('muscle_group', norm(muscle));             // case-insensitive
-    if (category) qb = qb.ilike('category',     norm(category));
-    if (level)    qb = qb.ilike('level',        norm(level));
-    if (equipment)qb = qb.ilike('equipment',    `%${norm(equipment)}%`);   // hỗ trợ CSV/string
+    // Accent-insensitive (nếu đã có cột name_search tạo bằng trigger unaccent)
+    if (q) {
+      const qNorm = q.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+      qb = qb.or(`name.ilike.%${q}%,name_search.ilike.%${qNorm}%`);
+      // Nếu CHƯA có name_search, dùng fallback:
+      // qb = qb.ilike('name', `%${q}%`);
+    }
+    if (muscle)   qb = qb.ilike('muscle_group', muscle.toLowerCase());
+    if (category && catNorm) qb = qb.ilike('category', catNorm);
+    if (level)    qb = qb.ilike('level', level.toLowerCase());
+
+    // equipment: lọc hậu kỳ để hỗ trợ CSV/array
+    if (equipment) {
+      // Chuẩn bị ilike sơ bộ để Supabase PostgREST không trả quá nhiều
+      qb = qb.ilike('equipment', `%${equipment.toLowerCase()}%`);
+    }
 
     const { data, error } = await qb.limit(500);
     if (error) throw error;
 
-    // Hậu lọc bổ sung (trường hợp equipment lưu dạng CSV/json/array)
-    const rows = (data || []).filter(r => {
-      if (equipment) {
-        const eq = toList(r.equipment).map(norm);
-        if (!eq.includes(norm(equipment))) return false;
-      }
-      // goal: chỉ lọc nếu bảng có cột 'goals' (ở schema bạn hiện tại KHÔNG có), nên bỏ qua
-      return true;
-    });
+    // Hậu lọc equipment chuẩn
+    let rows = data || [];
+    if (equipment) {
+      const ek = equipment.toLowerCase();
+      rows = rows.filter(r => {
+        if (!r.equipment) return ek === 'none';
+        if (Array.isArray(r.equipment)) {
+          return r.equipment.map(x=>String(x).toLowerCase()).includes(ek);
+        }
+        return String(r.equipment).toLowerCase().split(/[, ]+/).includes(ek);
+      });
+    }
 
-    // Chuẩn hoá output cho client
+    // Chuẩn hóa output
+    const toList = v =>
+      Array.isArray(v) ? v :
+      !v ? [] :
+      typeof v === 'string' ? v.split(/[, ]+/).filter(Boolean) :
+      typeof v === 'object' ? Object.values(v) : [];
+
     res.json(rows.map(r => ({
       id: r.id,
       name: r.name,
       met: r.met ?? null,
       level: r.level ?? null,
-      cues: r.cues ?? r.note ?? null,
-      muscle_group: r.muscle_group,
-      category: r.category,
+      cues: r.cues || r.note || null,
+      muscle_group: r.muscle_group || null,
+      category: r.category || null,
       equipment: toList(r.equipment),
       recommend: r.recommend || null,
     })));
   } catch (e) {
-    console.error('GET /api/exercises', e);
+    console.error('[GET /api/exercises] error:', e);
     res.status(400).json({ error: e.message || 'Internal error' });
   }
 });
@@ -1463,14 +1987,101 @@ app.get('/api/workouts/plans', requireAuth, async (req, res) => {
 app.get('/api/workouts/plans/:id', requireAuth, async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const plan = await service.from('workout_plans').select('*').eq('id', id).maybeSingle();
-    if (plan.error) throw plan.error;
-    const days = await service.from('workout_plan_days').select('*').eq('plan_id', id);
-    if (days.error) throw days.error;
-    const items = await service.from('workout_plan_items').select('*, exercises(name,muscle_group)').eq('plan_id', id).order('order_no');
-    if (items.error) throw items.error;
-    res.json({ ...plan.data, days: days.data||[], items: items.data||[] });
-  } catch (e) { res.status(400).json({ error: e.message }); }
+    if (!id) return res.status(400).json({ error: 'Invalid id' });
+
+    // Lấy plan
+    const planR = await service
+      .from('workout_plans')
+      .select('id,uid,title,goal,start_date,weeks,progression_rule,created_at')
+      .eq('id', id)
+      .maybeSingle();
+    if (planR.error) throw planR.error;
+    const plan = planR.data;
+    if (!plan) return res.status(404).json({ error: 'Plan not found' });
+    if (plan.uid !== req.uid) return res.status(403).json({ error: 'Forbidden' });
+
+    // Lấy days (nếu có bảng)
+    let days = [];
+    const daysR = await service
+      .from('workout_plan_days')
+      .select('id,plan_id,dow,note')
+      .eq('plan_id', id)
+      .order('dow', { ascending: true });
+    if (!daysR.error && Array.isArray(daysR.data)) {
+      days = daysR.data;
+    }
+
+    // Lấy items (KHÔNG chọn cột không tồn tại)
+    const itemsR = await service
+      .from('workout_plan_items')
+      .select('*, exercises(name,muscle_group)')
+      .eq('plan_id', id)
+      .order('order_no', { ascending: true });
+    if (itemsR.error) throw itemsR.error;
+    const rawItems = itemsR.data || [];
+
+    // Gom items theo day id hoặc dow
+    const byDayId = {};
+    const byDow = {};
+
+    for (const it of rawItems) {
+      const dayId = it.plan_day_id ?? it.day_id ?? it.plan_day ?? it.day ?? null;
+      const dow =
+        Number(it.dow ?? it.weekday ?? it.day_of_week ?? (it.day && Number(it.day)) ?? NaN);
+      const itemNorm = {
+        id: it.id,
+        exercise_id: it.exercise_id,
+        name: it.exercises?.name || it.name || null,
+        // Nếu có duration_min thì xem như cardio; còn lại strength
+        category: (it.category || (it.duration_min ? 'cardio' : 'strength')).toLowerCase(),
+        sets: it.sets ?? null,
+        reps: it.reps ?? null,
+        duration_min: it.duration_min ?? null,
+        rest_sec: it.rest_sec ?? 60,
+        order_no: it.order_no ?? 0,
+      };
+
+      if (dayId) {
+        (byDayId[dayId] || (byDayId[dayId] = [])).push(itemNorm);
+      } else if (!Number.isNaN(dow)) {
+        const normDow = ((dow - 1 + 7) % 7) + 1; // 1..7
+        (byDow[normDow] || (byDow[normDow] = [])).push(itemNorm);
+      }
+    }
+
+    // Nếu có bảng days: gán items theo id; nếu không, tạo days từ dow
+    let schedule = [];
+    if (days.length > 0) {
+      schedule = days.map(d => ({
+        id: d.id,
+        dow: Number(d.dow || 1),
+        note: d.note || '',
+        items: (byDayId[d.id] || []).sort((a, b) => (a.order_no || 0) - (b.order_no || 0)),
+      }));
+    } else {
+      // fallback: build 1..7 từ byDow
+      schedule = Array.from({ length: 7 }, (_, i) => {
+        const dow = i + 1;
+        return {
+          id: null,
+          dow,
+          note: '',
+          items: (byDow[dow] || []).sort((a, b) => (a.order_no || 0) - (b.order_no || 0)),
+        };
+      }).filter(d => d.items.length > 0);
+    }
+
+    // Bảo đảm sắp xếp theo dow tăng dần
+    schedule.sort((a, b) => a.dow - b.dow);
+
+    res.json({
+      ...plan,
+      days: schedule,
+    });
+  } catch (e) {
+    console.error('GET /api/workouts/plans/:id error:', e);
+    res.status(400).json({ error: e.message || 'Internal error' });
+  }
 });
 
 app.post('/api/workouts/plans', requireAuth, async (req, res) => {
@@ -1534,6 +2145,126 @@ app.post('/api/workouts/plans', requireAuth, async (req, res) => {
     console.error('POST /api/workouts/plans', e);
     res.status(400).json({ error: e.message || 'Internal error' });
   }
+});
+// ===== Workout sets: create / list / update / delete =====
+app.post('/api/workouts/sets', requireAuth, async (req, res) => {
+  try {
+    const uid = req.uid;
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
+    const { session_id, exercise_id, set_no, reps, weight_kg, rpe, note } = body;
+    // Kiểm tra session thuộc uid
+    const s = await service.from('workout_sessions').select('uid').eq('id', session_id).maybeSingle();
+    if (s.error || !s.data || s.data.uid !== uid) return res.status(403).json({ error: 'Forbidden' });
+
+    const ins = await service.from('workout_sets')
+      .insert({ session_id, exercise_id, set_no, reps, weight_kg, rpe, note })
+      .select().maybeSingle();
+    if (ins.error) throw ins.error;
+
+    // Cập nhật PR nếu là strength
+    if (Number(reps) > 0 && Number(weight_kg) > 0) {
+      const est1RM = Number(weight_kg) * (1 + Number(reps)/30);
+      const cur = await service.from('pr_records')
+        .select('id, weight_kg, reps').eq('uid', uid).eq('exercise_id', exercise_id)
+        .order('weight_kg', { ascending: false }).limit(1);
+      const shouldUpdate = !cur.error && (!cur.data?.length || est1RM > Number(cur.data[0]?.weight_kg || 0));
+      if (shouldUpdate) {
+        await service.from('pr_records').insert({
+          uid, exercise_id, weight_kg: Number(weight_kg), reps: Number(reps), date: new Date().toISOString().slice(0,10)
+        });
+      }
+    }
+
+    res.status(201).json(ins.data);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.get('/api/workouts/sets', requireAuth, async (req, res) => {
+  try {
+    const session_id = Number(req.query.session_id);
+    if (!session_id) return res.status(400).json({ error: 'session_id required' });
+    const uid = req.uid;
+    const s = await service.from('workout_sessions').select('uid').eq('id', session_id).maybeSingle();
+    if (s.error || !s.data || s.data.uid !== uid) return res.status(403).json({ error: 'Forbidden' });
+
+    const rows = await service.from('workout_sets').select('*').eq('session_id', session_id).order('set_no');
+    if (rows.error) throw rows.error;
+    res.json(rows.data || []);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.patch('/api/workouts/sets/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
+    const set = await service.from('workout_sets').select('session_id').eq('id', id).maybeSingle();
+    if (set.error || !set.data) return res.status(404).json({ error: 'Not found' });
+    const s = await service.from('workout_sessions').select('uid').eq('id', set.data.session_id).maybeSingle();
+    if (s.error || !s.data || s.data.uid !== req.uid) return res.status(403).json({ error: 'Forbidden' });
+
+    const up = await service.from('workout_sets').update(body).eq('id', id).select().maybeSingle();
+    if (up.error) throw up.error;
+    res.json(up.data);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.delete('/api/workouts/sets/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const set = await service.from('workout_sets').select('session_id').eq('id', id).maybeSingle();
+    if (set.error || !set.data) return res.status(404).json({ error: 'Not found' });
+    const s = await service.from('workout_sessions').select('uid').eq('id', set.data.session_id).maybeSingle();
+    if (s.error || !s.data || s.data.uid !== req.uid) return res.status(403).json({ error: 'Forbidden' });
+
+    const del = await service.from('workout_sets').delete().eq('id', id);
+    if (del.error) throw del.error;
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ===== Training program progression preview =====
+app.get('/api/workouts/plans/:id/progress', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const p = await service.from('workout_plans').select('uid,weeks,progression_rule').eq('id', id).maybeSingle();
+    if (p.error || !p.data || p.data.uid !== req.uid) return res.status(403).json({ error: 'Forbidden' });
+    const rule = p.data.progression_rule || { type:'percent', strength_inc:0.03, cardio_inc_min:2 };
+    res.json({ weeks: p.data.weeks || 4, rule });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ===== Calendar scheduling =====
+app.get('/api/workouts/calendar', requireAuth, async (req, res) => {
+  try {
+    const uid = req.uid;
+    const from = (req.query.from || new Date().toISOString().slice(0,10)).toString();
+    const to   = (req.query.to   || from).toString();
+    const q = await service.from('workout_calendar').select('*').eq('uid', uid).gte('date', from).lte('date', to).order('date');
+    if (q.error) throw q.error;
+    res.json(q.data || []);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.post('/api/workouts/calendar', requireAuth, async (req, res) => {
+  try {
+    const uid = req.uid;
+    const { date, plan_id, note } = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
+    if (!date) return res.status(400).json({ error: 'date required' });
+    const ins = await service.from('workout_calendar').insert({ uid, date, plan_id: plan_id || null, note: note || null }).select().maybeSingle();
+    if (ins.error) throw ins.error;
+    res.json(ins.data);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.delete('/api/workouts/calendar/:id', requireAuth, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const row = await service.from('workout_calendar').select('uid').eq('id', id).maybeSingle();
+    if (row.error || !row.data || row.data.uid !== req.uid) return res.status(403).json({ error: 'Forbidden' });
+    const del = await service.from('workout_calendar').delete().eq('id', id);
+    if (del.error) throw del.error;
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 // ===== RECOMMENDATION from BMI & goal =====
@@ -1603,4 +2334,88 @@ app.get('/api/workouts/recommend', requireAuth, async (req, res) => {
     res.status(400).json({ error: e.message });
   }
 });
+// ===== PROGRESS (week/month) =====
+app.get('/api/workouts/progress', requireAuth, async (req, res) => {
+  try {
+    const uid = req.uid;
+    const range = (req.query.range || 'week').toString(); // week | month
 
+    const today = new Date();
+    const start = new Date(today);
+    if (range === 'month') {
+      start.setDate(1);
+    } else {
+      // Mon=0..Sun=6
+      const d = (today.getDay() + 6) % 7;
+      start.setDate(today.getDate() - d);
+    }
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    if (range === 'month') end.setMonth(start.getMonth() + 1);
+    else end.setDate(start.getDate() + 7);
+    const startKey = start.toISOString().slice(0, 10);
+    const endKey   = end.toISOString().slice(0, 10);
+
+    // Lấy sessions trong khoảng ngày (dựa vào cột date dạng YYYY-MM-DD)
+    const ss = await service
+      .from('workout_sessions')
+      .select('date, duration_min, calories, exercise_id')
+      .eq('uid', uid)
+      .gte('date', startKey)
+      .lt('date', endKey);
+
+    if (ss.error) throw ss.error;
+
+    // Khởi tạo ngày trống trong khoảng
+    const days = {};
+    for (let d = new Date(start); d < end; d.setDate(d.getDate() + 1)) {
+      const key = d.toISOString().slice(0, 10);
+      days[key] = { date: key, minutes: 0, calories: 0 };
+    }
+
+    let totalMinutes = 0, totalCalories = 0;
+    (ss.data || []).forEach(r => {
+      const key = typeof r.date === 'string' ? r.date : new Date(r.date).toISOString().slice(0, 10);
+      if (!days[key]) days[key] = { date: key, minutes: 0, calories: 0 };
+      const m = Number(r.duration_min || 0);
+      const c = Number(r.calories || 0);
+      days[key].minutes += m;
+      days[key].calories += c;
+      totalMinutes += m;
+      totalCalories += c;
+    });
+
+    // Nhóm cơ (dựa trên exercise_id)
+    const sessIds = (ss.data || []).map(s => s.exercise_id).filter(Boolean);
+    let byMuscle = {};
+    if (sessIds.length) {
+      const ex = await service.from('exercises').select('id,muscle_group').in('id', sessIds);
+      if (ex.error) throw ex.error;
+      const map = Object.fromEntries((ex.data || []).map(e => [e.id, e.muscle_group || 'other']));
+      (ss.data || []).forEach(s => {
+        const g = map[s.exercise_id] || 'other';
+        byMuscle[g] = (byMuscle[g] || 0) + Number(s.duration_min || 0);
+      });
+    }
+
+    // Số buổi trong tuần hiện tại
+    const weekStart = new Date();
+    weekStart.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+    const weekKeyStart = weekStart.toISOString().slice(0, 10);
+    const sessionsThisWeek = (ss.data || []).filter(r => (typeof r.date === 'string' ? r.date : new Date(r.date).toISOString().slice(0, 10)) >= weekKeyStart).length;
+
+    res.json({
+      range,
+      start: startKey,
+      end: endKey,
+      totalMinutes,
+      totalCalories,
+      sessionsThisWeek,
+      bars: Object.values(days), // [{date,minutes,calories}]
+      byMuscle                   // {chest: 80, back: 40, ...} tính theo phút
+    });
+  } catch (e) {
+    console.error('GET /api/workouts/progress error:', e);
+    res.status(400).json({ error: e.message || 'Internal error' });
+  }
+});

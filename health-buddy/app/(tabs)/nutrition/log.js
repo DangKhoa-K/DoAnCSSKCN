@@ -1,13 +1,16 @@
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import { Alert, Button, FlatList, RefreshControl, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Alert, Button, FlatList, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { api } from '../../../src/lib/api';
-import { emit, EVENTS } from '../../../src/lib/events';
+import { EVENTS, on } from '../../../src/lib/events';
 
 const C = { bg:'#F6F7FB', card:'#fff', b:'#e5e7eb', text:'#0f172a', sub:'#64748b', primary:'#2563eb' };
 const MEAL_LABEL = { breakfast:'Bữa sáng', lunch:'Bữa trưa', dinner:'Bữa tối', snack:'Bữa phụ' };
 const today = () => new Date().toISOString().slice(0,10);
 const useDebounced = (v,ms=350)=>{ const [x,setX]=useState(v); useEffect(()=>{ const t=setTimeout(()=>setX(v),ms); return ()=>clearTimeout(t); },[v,ms]); return x; };
+
+// bỏ dấu/chuẩn hóa để so tên
+const norm = (s) => (s||'').normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().trim();
 
 function MealRow({ it, onEdit, onDelete }) {
   return (
@@ -58,18 +61,56 @@ export default function NutritionLog() {
   const [kw, setKw] = useState('');
   const debKw = useDebounced(kw, 350);
   const [foods, setFoods] = useState([]);
-  const [qtyById, setQtyById] = useState({}); // số "khẩu phần" (1 = portion_g)
+  const [qtyById, setQtyById] = useState({});
   const [loading, setLoading] = useState(false);
 
   const [meals, setMeals] = useState([]);
-  const [refreshing, setRefreshing] = useState(false);
+
+  // BOOST từ kế hoạch
+  const [boostedIds, setBoostedIds] = useState(new Set());
+  const [boostedFoods, setBoostedFoods] = useState([]); // mảng foods được boost để hiển thị quick-add
 
   const loadMeals = useCallback(async () => {
     const t = await api('/api/meals/today').catch(()=>null);
     setMeals(Array.isArray(t?.meals) ? t.meals : []);
   }, []);
-  useFocusEffect(useCallback(()=>{ loadMeals(); }, [loadMeals]));
 
+  // Lấy kế hoạch mới nhất và map ra foods để boost
+  const loadBoostFromPlan = useCallback(async () => {
+    try {
+      const plans = await api('/api/nutrition/mealplans?limit=1'); // lấy plan mới nhất
+      if (!Array.isArray(plans) || !plans.length) {
+        setBoostedIds(new Set());
+        setBoostedFoods([]);
+        return;
+      }
+      const lastId = plans[0].id;
+      const detail = await api(`/api/nutrition/mealplans/${lastId}`);
+      const planNames = new Set();
+      (detail?.meals || []).forEach(m => (m.items || []).forEach(it => planNames.add(norm(it.food))));
+
+      // Lấy toàn bộ foods (hoặc đủ lớn) để map tên -> id
+      const all = await api('/api/foods?limit=500').catch(()=>[]);
+      const ids = new Set();
+      const picked = [];
+      (Array.isArray(all) ? all : []).forEach(f => {
+        if (planNames.has(norm(f.name_vi))) {
+          ids.add(f.id);
+          picked.push(f);
+        }
+      });
+      setBoostedIds(ids);
+      // Sắp xếp tên A-Z cho đẹp
+      picked.sort((a,b)=> a.name_vi.localeCompare(b.name_vi,'vi'));
+      setBoostedFoods(picked.slice(0, 12)); // giới hạn hiển thị
+    } catch (e) {
+      console.error('loadBoostFromPlan error:', e);
+      setBoostedIds(new Set());
+      setBoostedFoods([]);
+    }
+  }, []);
+
+  // Tải foods theo từ khóa
   const fetchFoods = useCallback(async (q) => {
     setLoading(true);
     try {
@@ -77,13 +118,19 @@ export default function NutritionLog() {
       setFoods(Array.isArray(res) ? res : []);
     } finally { setLoading(false); }
   }, []);
-  useEffect(()=>{ fetchFoods(debKw); }, [debKw, fetchFoods]);
+
+  // Khởi tạo / cập nhật khi focus hoặc khi có sự kiện cập nhật
+  useFocusEffect(useCallback(() => { loadMeals(); loadBoostFromPlan(); fetchFoods(debKw); }, [loadMeals, loadBoostFromPlan, fetchFoods, debKw]));
+  useEffect(() => on(EVENTS.NUTRITION_UPDATED, async () => {
+    await loadBoostFromPlan();
+    await fetchFoods(debKw);
+  }), [loadBoostFromPlan, fetchFoods, debKw]);
 
   const setQty = useCallback((id, v) => setQtyById(s=>({ ...s, [id]: v })), []);
 
-  const addToMeal = useCallback(async (food) => {
+  const addToMeal = useCallback(async (food, quantityOverride) => {
     try {
-      const quantity = Number(qtyById[food.id] || 0);
+      const quantity = Number(quantityOverride ?? qtyById[food.id] ?? 0);
       if (!quantity) return Alert.alert('Nhập số phần hợp lệ (ví dụ 1.5)');
       const meal = await api('/api/meals', { method:'POST', body: JSON.stringify({ meal_type: mealType, date: today() }) });
       await api(`/api/meals/${meal.id}/items`, { method:'POST', body: JSON.stringify({ food_id: food.id, quantity }) });
@@ -92,30 +139,48 @@ export default function NutritionLog() {
       Alert.alert('Đã thêm');
     } catch (_e) { Alert.alert('Lỗi', 'Không thể thêm món'); }
   }, [qtyById, mealType, loadMeals]);
-  emit(EVENTS.NUTRITION_UPDATED);
 
-  const onEdit = useCallback(async (it) => {
-    // sửa bằng đổi quantity theo grams/portion
-    const portion = Number(it.portion_g || 100);
-    const currentQty = it.grams && portion ? (Number(it.grams)/portion) : 1;
-    const next = prompt ? prompt('Số phần mới (ví dụ 1.2):', String(currentQty)) : null;
-    if (next == null) return;
-    const quantity = Number(next || 0);
-    if (!quantity) return Alert.alert('Giá trị không hợp lệ');
-    await api(`/api/meal-items/${it.id}`, { method:'PATCH', body: JSON.stringify({ quantity }) });
-    await loadMeals();
-  }, [loadMeals]);
+  // Danh sách foods đã reorder: boosted lên trước
+  const viewFoods = useMemo(() => {
+    const ids = boostedIds;
+    const arr = [...foods];
+    arr.sort((a,b) => {
+      const ba = ids.has(a.id) ? 1 : 0;
+      const bb = ids.has(b.id) ? 1 : 0;
+      if (ba !== bb) return bb - ba; // true trước
+      return a.name_vi.localeCompare(b.name_vi, 'vi');
+    });
+    return arr;
+  }, [foods, boostedIds]);
 
-  const onDelete = useCallback(async (it) => {
-    await api(`/api/meal-items/${it.id}`, { method:'DELETE' });
-    await loadMeals();
-  }, [loadMeals]);
-  emit(EVENTS.NUTRITION_UPDATED);
+  // Quick add 1 phần cho món boosted
+  const quickAdd = useCallback(async (food) => {
+    await addToMeal(food, 1);
+  }, [addToMeal]);
 
   const header = (
     <View style={{ padding:16 }}>
       <Text style={{ fontSize:22, fontWeight:'800', color:C.text }}>Nhật ký bữa ăn</Text>
       <Text style={{ color:C.sub, marginTop:4 }}>Chọn bữa, tìm món và thêm theo <Text style={{ fontWeight:'700' }}>số phần</Text>.</Text>
+
+      {/* Boosted từ kế hoạch vừa lưu */}
+      {boostedFoods.length > 0 && (
+        <View style={{ marginTop:10, backgroundColor:'#fff', borderWidth:1, borderColor:C.b, borderRadius:10, padding:10 }}>
+          <Text style={{ fontWeight:'700', color:C.text, marginBottom:6 }}>Gợi ý từ kế hoạch</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {boostedFoods.map(f => (
+              <TouchableOpacity key={f.id} onPress={()=>quickAdd(f)}
+                style={{ marginRight:8, borderWidth:1, borderColor:C.b, borderRadius:10, paddingVertical:8, paddingHorizontal:10, backgroundColor:'#f8fafc' }}>
+                <Text style={{ fontWeight:'600', color:C.text }}>{f.name_vi}</Text>
+                <Text style={{ color:C.sub, fontSize:12 }}>{f.portion_g}g • {f.kcal} kcal</Text>
+                <Text style={{ color:C.sub, fontSize:12 }}>P {f.protein_g} • C {f.carbs_g} • F {f.fat_g}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+          <Text style={{ color:C.sub, marginTop:6, fontSize:12 }}>Chạm để thêm nhanh 1 phần vào {MEAL_LABEL[mealType]}.</Text>
+        </View>
+      )}
+
       <View style={{ flexDirection:'row', gap:8, marginTop:10, flexWrap:'wrap' }}>
         {['breakfast','lunch','dinner','snack'].map(mt => (
           <TouchableOpacity key={mt} onPress={()=>setMealType(mt)} style={{
@@ -137,12 +202,20 @@ export default function NutritionLog() {
     </View>
   );
 
+  const [refreshingState, setRefreshingState] = useState(false);
+
   return (
     <FlatList
       style={{ flex:1, backgroundColor:C.bg }}
       ListHeaderComponent={header}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async()=>{ setRefreshing(true); await Promise.all([loadMeals(), fetchFoods(debKw)]); setRefreshing(false); }} />}
-      data={foods}
+      refreshControl={
+        <RefreshControl refreshing={refreshingState} onRefresh={async()=>{
+          setRefreshingState(true);
+          await Promise.all([loadMeals(), loadBoostFromPlan(), fetchFoods(debKw)]);
+          setRefreshingState(false);
+        }} />
+      }
+      data={viewFoods}
       keyExtractor={i=>String(i.id)}
       renderItem={({ item }) => {
         const portion = Number(item.portion_g || 100);
@@ -154,10 +227,13 @@ export default function NutritionLog() {
         const c = factor ? (item.carbs_g||0)*factor : 0;
         const f = factor ? (item.fat_g||0)*factor : 0;
         const x = factor ? (item.fiber_g||0)*factor : 0;
+        const boosted = boostedIds.has(item.id);
 
         return (
-          <View style={{ marginHorizontal:16, marginBottom:12, backgroundColor:'#fff', borderWidth:1, borderColor:C.b, borderRadius:12, padding:12 }}>
-            <Text style={{ fontWeight:'700', color:C.text }}>{item.name_vi}</Text>
+          <View style={{ marginHorizontal:16, marginBottom:12, backgroundColor:'#fff', borderWidth:1, borderColor: boosted ? C.primary : C.b, borderRadius:12, padding:12 }}>
+            <Text style={{ fontWeight:'700', color:C.text }}>
+              {boosted ? '⭐ ' : ''}{item.name_vi}
+            </Text>
             <Text style={{ color:C.sub, marginTop:4 }}>{portion} g / 1 phần • {item.kcal} kcal/phần</Text>
 
             <View style={{ flexDirection:'row', alignItems:'center', gap:8, marginTop:8 }}>
@@ -181,7 +257,7 @@ export default function NutritionLog() {
       ListFooterComponent={
         <View style={{ padding:16 }}>
           <Text style={{ fontWeight:'800', color:C.text, marginBottom:8 }}>Bữa hôm nay</Text>
-          {meals.map(m => <MealCard key={m.id} meal={m} onEdit={onEdit} onDelete={onDelete} />)}
+          {meals.map(m => <MealCard key={m.id} meal={m} onEdit={()=>{}} onDelete={async(it)=>{ await api(`/api/meal-items/${it.id}`, { method:'DELETE' }); await loadMeals(); }} />)}
         </View>
       }
       ListEmptyComponent={<Text style={{ textAlign:'center', color:C.sub, marginTop:30 }}>{loading?'Đang tải…':'Không có món nào.'}</Text>}

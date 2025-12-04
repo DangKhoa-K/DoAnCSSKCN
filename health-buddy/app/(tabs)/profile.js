@@ -2,20 +2,22 @@
 import { Link } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { api } from '../../src/lib/api';
+import { emit, EVENTS } from '../../src/lib/events';
 import { useProfile } from '../../src/state/profile';
 
-// màu/bo góc gọn
 const C = {
-  bg: '#F6F7FB',
-  card: '#fff',
-  text: '#111827',
-  sub: '#6b7280',
-  border: '#E5E7EB',
+  bg: '#F0F6FF',
+  card: '#FFFFFF',
+  text: '#0F172A',
+  sub: '#64748B',
+  border: '#DCE7FF',
   primary: '#2563EB',
   muted: '#9CA3AF',
-  good: '#16a34a',
-  warn: '#f59e0b',
-  danger: '#dc2626',
+  good: '#16A34A',
+  warn: '#F59E0B',
+  danger: '#DC2626',
+  chipBg: '#EAF1FF',
 };
 const R = { md: 12, lg: 16 };
 
@@ -31,6 +33,12 @@ const ACTIVITIES = [
   { key: 'high', label: 'Nhiều vận động' },
 ];
 
+const SEXES = [
+  { key: 'male', label: 'Nam' },
+  { key: 'female', label: 'Nữ' },
+  { key: 'other', label: 'Khác' },
+];
+
 function Pill({ active, onPress, children }) {
   return (
     <TouchableOpacity
@@ -38,7 +46,7 @@ function Pill({ active, onPress, children }) {
       style={{
         paddingVertical: 8, paddingHorizontal: 14, borderRadius: 999,
         borderWidth: 1, borderColor: active ? C.primary : C.border,
-        backgroundColor: active ? '#E6F0FF' : '#fff', marginRight: 8, marginBottom: 8
+        backgroundColor: active ? C.chipBg : '#fff', marginRight: 8, marginBottom: 8
       }}
     >
       <Text style={{ color: active ? C.primary : C.text, fontWeight: '600' }}>{children}</Text>
@@ -50,7 +58,8 @@ function Card({ title, desc, children, style }) {
   return (
     <View style={[{
       backgroundColor: C.card, borderWidth: 1, borderColor: C.border,
-      borderRadius: R.lg, padding: 14, marginBottom: 12
+      borderRadius: R.lg, padding: 14, marginBottom: 12,
+      shadowColor: '#93C5FD', shadowOpacity: 0.1, shadowRadius: 6, elevation: 1
     }, style]}>
       {title ? <Text style={{ fontSize: 16, fontWeight: '800', color: C.text }}>{title}</Text> : null}
       {desc ? <Text style={{ color: C.sub, marginTop: 4 }}>{desc}</Text> : null}
@@ -61,17 +70,19 @@ function Card({ title, desc, children, style }) {
 
 export default function ProfileTab() {
   const { metrics, setMetrics } = useProfile();
-  const {
-    height_cm, weight_kg, bmi, activity_level, goal, tdee,
-  } = metrics || {};
+  const { email, height_cm, weight_kg, bmi, activity_level, goal, tdee, sex, birth_year } = metrics || {};
 
-  // local form
   const [h, setH] = useState(height_cm ? String(height_cm) : '');
   const [w, setW] = useState(weight_kg ? String(weight_kg) : '');
-  const [g, setG] = useState(goal || 'keep');
-  const [act, setAct] = useState(activity_level || 'normal');
+  const [g, setG] = useState(goal ? (goal === 'maintain' ? 'keep' : goal) : 'keep');
+  const [act, setAct] = useState(activity_level ? (
+    activity_level === 'light' ? 'low' :
+    activity_level === 'active' ? 'high' : 'normal'
+  ) : 'normal');
 
-  // BMI hiển thị tức thì theo input
+  const [sexVal, setSexVal] = useState(sex || 'other');
+  const [birth, setBirth] = useState(birth_year ? String(birth_year) : '');
+
   const liveBMI = useMemo(() => {
     const hn = Number(h), wn = Number(w);
     if (!hn || !wn) return null;
@@ -82,26 +93,27 @@ export default function ProfileTab() {
     if (val == null) return C.sub;
     if (val < 18.5) return C.warn;
     if (val < 25) return C.good;
-    if (val < 30) return '#fb923c';
+    if (val < 30) return '#FB923C';
     return C.danger;
   };
 
-  // TDEE & macro gợi ý (từ store – đã tính trong setMetrics; nhưng tính nhanh theo live input để xem trước)
   const preview = useMemo(() => {
-    const wn = Number(w);
-    if (!wn) return { tdee: null, target: null };
-    const actFactor = act === 'low' ? 1.2 : act === 'high' ? 1.7 : 1.45;
-    const bmr = 24 * wn;
-    const tdeeEst = Math.round(bmr * actFactor);
-    const kcal = tdeeEst + (g === 'lose' ? -300 : g === 'gain' ? 300 : 0);
-    const target = {
-      kcal,
-      protein_g: Math.round((kcal * 0.30) / 4),
-      carbs_g: Math.round((kcal * 0.40) / 4),
-      fat_g: Math.round((kcal * 0.30) / 9),
-    };
-    return { tdee: tdeeEst, target };
-  }, [w, act, g]);
+  const wn = Number(w);
+  if (!wn) return { tdee: null, target: null };
+  // Ước tính BMR đơn giản nếu thiếu sex/age/height
+  const actFactor = act === 'low' ? 1.2 : act === 'high' ? 1.7 : 1.45;
+  const bmrSimple = 24 * wn;
+  const tdeeEst = Math.round(bmrSimple * actFactor);
+  const adj = g === 'lose' ? -300 : g === 'gain' ? 300 : 0;
+  const kcal = tdeeEst + adj;
+  const target = {
+    kcal,
+    protein_g: Math.round((kcal * 0.30) / 4),
+    carbs_g: Math.round((kcal * 0.40) / 4),
+    fat_g: Math.round((kcal * 0.30) / 9),
+  };
+  return { tdee: tdeeEst, target };
+}, [w, act, g]);
 
   const savedTarget = useMemo(() => {
     if (!tdee) return null;
@@ -114,24 +126,76 @@ export default function ProfileTab() {
     };
   }, [tdee, goal]);
 
-  const save = () => {
+  async function save() {
     try {
       const hNum = Number(h);
       const wNum = Number(w);
+      const birthNum = birth ? Number(birth) : null;
       if (!hNum || !wNum) return Alert.alert('Lỗi', 'Chiều cao và cân nặng phải > 0');
-      setMetrics({
-        height_cm: hNum,
-        weight_kg: wNum,
-        goal: g,
-        activity_level: act,
+      if (birth && (!Number.isInteger(birthNum) || birthNum < 1900 || birthNum > new Date().getUTCFullYear())) {
+        return Alert.alert('Lỗi', 'Năm sinh không hợp lệ');
+      }
+
+      // Map UI -> backend values
+      const goalServer = g === 'keep' ? 'maintain' : g;
+      const actServer =
+        act === 'low' ? 'light' :
+        act === 'high' ? 'active' :
+        'moderate';
+
+      // Lưu chiều cao / cân nặng
+      await api('/api/profile/body', {
+        method: 'POST',
+        body: JSON.stringify({ height_cm: hNum, weight_kg: wNum })
       });
-      Alert.alert('Đã lưu', 'Thông số cá nhân đã cập nhật');
+
+      // Tính kcal_target theo act + ±300
+      const actFactor =
+        actServer === 'sedentary' ? 1.2 :
+        actServer === 'light'     ? 1.375 :
+        actServer === 'moderate'  ? 1.55   :
+        actServer === 'active'    ? 1.725  :
+                                    1.9;
+      const bmrLike = 24 * wNum;
+      const base    = Math.round(bmrLike * actFactor);
+      const adj     = base + (goalServer === 'lose' ? -300 : goalServer === 'gain' ? 300 : 0);
+
+      // Lưu hồ sơ mở rộng
+      const payload = {
+        goal: goalServer,
+        activity_level: actServer,
+        kcal_target: adj,
+        sex: sexVal,
+        birth_year: birthNum || undefined
+      };
+      await api('/api/profile', {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+      });
+
+      // Lấy lại từ server để đồng bộ UI và state
+      const fresh = await api('/api/profile');
+      setMetrics({
+        email: fresh.email,
+        height_cm: fresh.height_cm,
+        weight_kg: fresh.weight_kg,
+        bmi: fresh.bmi,
+        activity_level: fresh.activity_level,
+        goal: fresh.goal,
+        tdee: fresh.tdee,
+        sex: fresh.sex,
+        birth_year: fresh.birth_year,
+        kcal_target: fresh.kcal_target
+      });
+
+      emit(EVENTS.NUTRITION_UPDATED);
+      Alert.alert('Đã lưu', 'Hồ sơ cá nhân đã cập nhật.');
     } catch (e) {
+      console.error('Profile save error:', e);
       Alert.alert('Lỗi', e?.message || String(e));
     }
-  };
+  }
 
-  // gợi ý tập theo BMI
   const trainingAdvice = useMemo(() => {
     const b = liveBMI ?? bmi;
     if (!b) return 'Nhập chiều cao / cân nặng để nhận gợi ý.';
@@ -141,13 +205,46 @@ export default function ProfileTab() {
     return 'Khởi động nhẹ hằng ngày, đi bộ 20–30 phút, sức mạnh nhẹ 2–3 buổi/tuần; tăng dần, theo dõi huyết áp.';
   }, [liveBMI, bmi]);
 
-  // gợi ý dinh dưỡng theo target hiện tại
   const macro = preview.target || savedTarget;
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={{ padding: 16 }}>
-      {/* Thông số cá nhân */}
-      <Card title="Hồ sơ sức khỏe" desc="Nhập chiều cao, cân nặng; chọn mục tiêu & mức độ hoạt động.">
+      {/* Header nhỏ */}
+      <View style={{ marginBottom: 12 }}>
+        <Text style={{ fontSize: 22, fontWeight: '800', color: C.text }}>Hồ sơ cá nhân</Text>
+        <Text style={{ color: C.sub, marginTop: 4 }}>Cập nhật thông tin để cá nhân hoá gợi ý tập luyện & dinh dưỡng.</Text>
+      </View>
+
+      {/* Thông tin liên hệ */}
+      <Card title="Thông tin liên hệ">
+        <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
+          <View style={{ flex: 1, minWidth: 150 }}>
+            <Text style={{ color: C.sub, marginBottom: 6 }}>Email</Text>
+            <View style={{ borderWidth: 1, borderColor: C.border, borderRadius: R.md, padding: 10, backgroundColor: '#F8FAFF' }}>
+              <Text style={{ color: C.text }}>{email || '(chưa có)'}</Text>
+            </View>
+          </View>
+          <View style={{ width: 140 }}>
+            <Text style={{ color: C.sub, marginBottom: 6 }}>Năm sinh</Text>
+            <TextInput
+              value={birth} onChangeText={setBirth} keyboardType="numeric" placeholder="2000"
+              placeholderTextColor={C.muted}
+              style={{ borderWidth: 1, borderColor: C.border, borderRadius: R.md, padding: 10, backgroundColor: '#fff' }}
+            />
+          </View>
+          <View style={{ flex: 1, minWidth: 150 }}>
+            <Text style={{ color: C.sub, marginBottom: 6 }}>Giới tính</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+              {SEXES.map(s => (
+                <Pill key={s.key} active={sexVal === s.key} onPress={() => setSexVal(s.key)}>{s.label}</Pill>
+              ))}
+            </View>
+          </View>
+        </View>
+      </Card>
+
+      {/* Thông số cơ thể & mục tiêu */}
+      <Card title="Thể trạng & mục tiêu" desc="Nhập chiều cao, cân nặng; chọn mục tiêu & mức độ hoạt động.">
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <View style={{ flex: 1 }}>
             <Text style={{ color: C.sub, marginBottom: 6 }}>Chiều cao (cm)</Text>
@@ -191,7 +288,7 @@ export default function ProfileTab() {
         </TouchableOpacity>
       </Card>
 
-      {/* Tính toán hiện tại */}
+      {/* Chỉ số hiện tại */}
       <Card title="Chỉ số hiện tại">
         <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
           <View style={{ flex: 1, minWidth: 150 }}>
@@ -209,14 +306,14 @@ export default function ProfileTab() {
         </View>
       </Card>
 
-      {/* Gợi ý dinh dưỡng */}
+      {/* Khuyến nghị dinh dưỡng */}
       <Card title="Khuyến nghị dinh dưỡng" desc="Tự động theo mục tiêu & TDEE.">
         {macro ? (
           <View style={{ rowGap: 6 }}>
             <Text>- Năng lượng mục tiêu: <Text style={{ fontWeight: '800' }}>{macro.kcal} kcal/ngày</Text></Text>
             <Text>- Protein: <Text style={{ fontWeight: '800' }}>{macro.protein_g} g</Text> • Carb: <Text style={{ fontWeight: '800' }}>{macro.carbs_g} g</Text> • Fat: <Text style={{ fontWeight: '800' }}>{macro.fat_g} g</Text></Text>
             <Text style={{ color: C.sub, marginTop: 6 }}>
-              Gợi ý: Ưu tiên đạm nạc (ức gà, cá, trứng), carb chậm (gạo lứt, khoai, yến mạch), thêm rau xanh & trái cây ít ngọt.
+              Gợi ý: Đạm nạc (ức gà, cá, trứng), carb chậm (gạo lứt, khoai, yến mạch), thêm rau xanh & trái cây ít ngọt.
             </Text>
           </View>
         ) : (
@@ -236,7 +333,7 @@ export default function ProfileTab() {
         </View>
       </Card>
 
-      {/* Gợi ý tập luyện */}
+      {/* Khuyến nghị tập luyện */}
       <Card title="Khuyến nghị tập luyện" desc="Tuỳ theo BMI hiện tại.">
         <Text style={{ lineHeight: 20 }}>{trainingAdvice}</Text>
         <Text style={{ color: C.sub, marginTop: 8 }}>

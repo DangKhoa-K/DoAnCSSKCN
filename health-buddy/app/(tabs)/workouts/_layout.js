@@ -8,6 +8,7 @@ export default function WorkoutsLayout() {
       headerShadowVisible: false,
       headerStyle: { backgroundColor: '#F7FAFF' },
       contentStyle: { backgroundColor: '#F7FAFF' },
+      headerTitleAlign: 'center' 
     }}>
       <Stack.Screen name="index" options={{ title: 'Tập luyện' }} />
       <Stack.Screen name="plan" options={{ title: 'Kế hoạch & Lịch' }} />
