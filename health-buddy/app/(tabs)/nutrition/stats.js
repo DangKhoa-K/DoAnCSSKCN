@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { api } from '../../../src/lib/api';
 
-const C = { bg:'#F6F7FB', card:'#fff', b:'#e5e7eb', text:'#0f172a', sub:'#64748b' };
+const C = { bg:'#F6F7FB', card:'#fff', b:'#e5e7eb', text:'#0f172a', sub:'#64748b', primary:'#2563eb' };
 
 function DayBar({ label, value, max, target }) {
   const w = Math.min(100, Math.round((value/Math.max(1,max))*100));
@@ -15,7 +15,7 @@ function DayBar({ label, value, max, target }) {
       </View>
       <View style={{ height:12, backgroundColor:'#e5e7eb', borderRadius:999, overflow:'hidden' }}>
         <View style={{ position:'absolute', left:0, top:0, bottom:0, width:`${t}%`, backgroundColor:'#bfdbfe' }}/>
-        <View style={{ position:'absolute', left:0, top:0, bottom:0, width:`${w}%`, backgroundColor:'#2563eb' }}/>
+        <View style={{ position:'absolute', left:0, top:0, bottom:0, width:`${w}%`, backgroundColor:C.primary }}/>
       </View>
     </View>
   );
@@ -28,7 +28,6 @@ export default function NutritionStats(){
   useEffect(() => {
     (async () => {
       try { setProfile(await api('/api/profile')); } catch(_e) {}
-      // lấy 7 ngày gần nhất
       const ds = Array.from({length:7}, (_,i)=> {
         const d = new Date(Date.now() - (6-i)*86400000);
         return d.toISOString().slice(0,10);
@@ -64,14 +63,14 @@ export default function NutritionStats(){
       <Text style={{ fontSize:22, fontWeight:'800', color:C.text }}>Thống kê dinh dưỡng</Text>
       <Text style={{ color:C.sub, marginTop:4 }}>Màu xanh nhạt: mục tiêu • Xanh đậm: thực tế</Text>
 
-      <View style={{ marginTop:12, backgroundColor:C.card, borderWidth:1, borderColor:C.b, borderRadius:12, padding:12 }}>
+      <View style={{ marginTop:12, backgroundColor:C.card, borderWidth:1, borderColor:C.b, borderRadius:14, padding:12 }}>
         <Text style={{ fontWeight:'700', color:C.text, marginBottom:8 }}>Kcal 7 ngày</Text>
         {days.map(d=>(
           <DayBar key={d.date} label={d.date.slice(5)} value={Number(d?.calories_in||0)} max={maxKcal} target={kcalTarget}/>
         ))}
       </View>
 
-      <View style={{ marginTop:12, backgroundColor:C.card, borderWidth:1, borderColor:C.b, borderRadius:12, padding:12 }}>
+      <View style={{ marginTop:12, backgroundColor:C.card, borderWidth:1, borderColor:C.b, borderRadius:14, padding:12 }}>
         <Text style={{ fontWeight:'700', color:C.text, marginBottom:8 }}>Macro hôm nay</Text>
         {[
           {label:'Protein', val:macro.p},
@@ -85,7 +84,7 @@ export default function NutritionStats(){
                 <Text>{x.label}</Text><Text style={{ color:C.sub }}>{x.val.toFixed(1)} g ({pct}%)</Text>
               </View>
               <View style={{ height:10, backgroundColor:'#e5e7eb', borderRadius:999 }}>
-                <View style={{ width:`${pct}%`, height:'100%', backgroundColor:'#2563eb', borderRadius:999 }}/>
+                <View style={{ width:`${pct}%`, height:'100%', backgroundColor:C.primary, borderRadius:999 }}/>
               </View>
             </View>
           );

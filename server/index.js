@@ -423,6 +423,12 @@ app.post('/api/workouts/reminders', requireAuth, async (req, res) => {
     const rows = Array.isArray(body) ? body : (body ? [body] : null);
     if (!rows || rows.length === 0) return res.status(400).json({ error: 'expected JSON array' });
 
+    // validate mềm: time_of_day bắt buộc, dow nếu có phải là mảng
+    for (const r of rows) {
+      if (!r?.time_of_day) return res.status(400).json({ error: 'time_of_day required' });
+      if (r?.dow && !Array.isArray(r.dow)) return res.status(400).json({ error: 'dow must be an array of ints' });
+    }
+
     const payload = rows.map(r => ({
       uid,
       time_of_day: r.time_of_day,
@@ -696,20 +702,25 @@ app.get('/api/hydration/logs', requireAuth, async (req, res) => {
 });
 
 app.post('/api/hydration/logs', requireAuth, async (req, res) => {
-  try {
-    const uid = req.uid;
-    const { date, amount_ml } = JSON.parse(req.body || '{}');
-    if (!date || !amount_ml) throw new Error('date & amount_ml required');
-    const { data, error } = await service.from('hydration_logs')
-      .insert({ uid, date, amount_ml: Number(amount_ml) })
-      .select()
-      .maybeSingle();
-    if (error) throw error;
-    res.json(data);
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
+    try {
+      const uid = req.uid;
+      const { date, amount_ml, drink_name } = req.body || {}; // dùng trực tiếp req.body
+      if (!date || !amount_ml) {
+        return res.status(400).json({ error: 'date & amount_ml required' });
+      }
+
+      const { data, error } = await service
+        .from('hydration_logs')
+        .insert({  uid, date, amount_ml: Number(amount_ml) })
+        .select()
+        .maybeSingle();
+
+      if (error) throw error;
+      res.status(201).json(data);
+    } catch (e) {
+      res.status(400).json({ error: e.message || 'Bad Request' });
+    }
+  });
 
 app.post('/api/medications', requireAuth, async (req, res) => {
   try {

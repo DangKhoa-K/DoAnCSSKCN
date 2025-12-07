@@ -1,6 +1,6 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, FlatList, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, FlatList, Pressable, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { api } from '../../../src/lib/api';
 import { EVENTS, on } from '../../../src/lib/events';
 
@@ -11,6 +11,14 @@ const useDebounced = (v,ms=350)=>{ const [x,setX]=useState(v); useEffect(()=>{ c
 
 // bỏ dấu/chuẩn hóa để so tên
 const norm = (s) => (s||'').normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().trim();
+
+function PrimaryButton({ title, onPress }) {
+  return (
+    <Pressable onPress={onPress} style={{ backgroundColor:C.primary, paddingVertical:10, paddingHorizontal:14, borderRadius:10 }}>
+      <Text style={{ color:'#fff', fontWeight:'800' }}>{title}</Text>
+    </Pressable>
+  );
+}
 
 function MealRow({ it, onEdit, onDelete }) {
   return (
@@ -89,7 +97,6 @@ export default function NutritionLog() {
       const planNames = new Set();
       (detail?.meals || []).forEach(m => (m.items || []).forEach(it => planNames.add(norm(it.food))));
 
-      // Lấy toàn bộ foods (hoặc đủ lớn) để map tên -> id
       const all = await api('/api/foods?limit=500').catch(()=>[]);
       const ids = new Set();
       const picked = [];
@@ -100,9 +107,8 @@ export default function NutritionLog() {
         }
       });
       setBoostedIds(ids);
-      // Sắp xếp tên A-Z cho đẹp
       picked.sort((a,b)=> a.name_vi.localeCompare(b.name_vi,'vi'));
-      setBoostedFoods(picked.slice(0, 12)); // giới hạn hiển thị
+      setBoostedFoods(picked.slice(0, 12));
     } catch (e) {
       console.error('loadBoostFromPlan error:', e);
       setBoostedIds(new Set());
@@ -132,8 +138,8 @@ export default function NutritionLog() {
     try {
       const quantity = Number(quantityOverride ?? qtyById[food.id] ?? 0);
       if (!quantity) return Alert.alert('Nhập số phần hợp lệ (ví dụ 1.5)');
-      const meal = await api('/api/meals', { method:'POST', body: JSON.stringify({ meal_type: mealType, date: today() }) });
-      await api(`/api/meals/${meal.id}/items`, { method:'POST', body: JSON.stringify({ food_id: food.id, quantity }) });
+      const meal = await api('/api/meals', { method:'POST', body: { meal_type: mealType, date: today() } });
+      await api(`/api/meals/${meal.id}/items`, { method:'POST', body: { food_id: food.id, quantity } });
       setQtyById(s=>({ ...s, [food.id]: '' }));
       await loadMeals();
       Alert.alert('Đã thêm');
@@ -165,7 +171,7 @@ export default function NutritionLog() {
 
       {/* Boosted từ kế hoạch vừa lưu */}
       {boostedFoods.length > 0 && (
-        <View style={{ marginTop:10, backgroundColor:'#fff', borderWidth:1, borderColor:C.b, borderRadius:10, padding:10 }}>
+        <View style={{ marginTop:10, backgroundColor:'#fff', borderWidth:1, borderColor:C.b, borderRadius:12, padding:10 }}>
           <Text style={{ fontWeight:'700', color:C.text, marginBottom:6 }}>Gợi ý từ kế hoạch</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             {boostedFoods.map(f => (
@@ -187,7 +193,7 @@ export default function NutritionLog() {
             paddingHorizontal:12, paddingVertical:8, borderRadius:999, borderWidth:1,
             borderColor: mt===mealType ? C.primary : C.b, backgroundColor: mt===mealType ? '#eaf1ff' : '#fff'
           }}>
-            <Text style={{ fontWeight:'600', color: mt===mealType ? C.primary : C.text }}>
+            <Text style={{ fontWeight:'700', color: mt===mealType ? C.primary : C.text }}>
               {MEAL_LABEL[mt]}
             </Text>
           </TouchableOpacity>
@@ -230,20 +236,21 @@ export default function NutritionLog() {
         const boosted = boostedIds.has(item.id);
 
         return (
-          <View style={{ marginHorizontal:16, marginBottom:12, backgroundColor:'#fff', borderWidth:1, borderColor: boosted ? C.primary : C.b, borderRadius:12, padding:12 }}>
+          <View style={{ marginHorizontal:16, marginBottom:12, backgroundColor:'#fff', borderWidth:2, borderColor: boosted ? '#bfdbfe' : C.b, borderRadius:12, padding:12 }}>
             <Text style={{ fontWeight:'700', color:C.text }}>
               {boosted ? '⭐ ' : ''}{item.name_vi}
             </Text>
             <Text style={{ color:C.sub, marginTop:4 }}>{portion} g / 1 phần • {item.kcal} kcal/phần</Text>
 
-            <View style={{ flexDirection:'row', alignItems:'center', gap:8, marginTop:8 }}>
+            <View style={{ flexDirection:'row', alignItems:'center', gap:8, marginTop:10 }}>
               <Text>Số phần:</Text>
               <TextInput
                 value={qtyById[item.id] ?? ''} onChangeText={(v)=>setQty(item.id, v)}
                 keyboardType="numeric" placeholder="ví dụ 1.5"
-                style={{ width:90, backgroundColor:'#fff', borderWidth:1, borderColor:C.b, borderRadius:8, padding:8 }}
+                style={{ width:100, backgroundColor:'#fff', borderWidth:1, borderColor:C.b, borderRadius:10, padding:10 }}
+                placeholderTextColor="#9ca3af"
               />
-              <Button title={`+ ${MEAL_LABEL[mealType]}`} onPress={()=>addToMeal(item)} />
+              <PrimaryButton title={`+ ${MEAL_LABEL[mealType]}`} onPress={()=>addToMeal(item)} />
             </View>
 
             {!!factor && (

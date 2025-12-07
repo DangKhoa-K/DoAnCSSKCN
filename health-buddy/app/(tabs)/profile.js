@@ -1,4 +1,5 @@
 // app/(tabs)/profile.js
+import { LinearGradient } from 'expo-linear-gradient';
 import { Link } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -68,10 +69,28 @@ function Card({ title, desc, children, style }) {
   );
 }
 
+function initialsOf(name) {
+  const s = String(name || '').trim();
+  if (!s) return 'U';
+  const parts = s.split(/\s+/);
+  const f = parts[0]?.[0] || '';
+  const l = parts.length > 1 ? (parts[parts.length - 1]?.[0] || '') : '';
+  return (f + l).toUpperCase();
+}
+
 export default function ProfileTab() {
   const { metrics, setMetrics } = useProfile();
-  const { email, height_cm, weight_kg, bmi, activity_level, goal, tdee, sex, birth_year } = metrics || {};
+  const {
+    email, display_name, phone,
+    height_cm, weight_kg, bmi,
+    activity_level, goal, tdee, sex, birth_year
+  } = metrics || {};
 
+  // Header & liên hệ
+  const [name, setName] = useState(display_name || '');
+  const [phoneVal, setPhoneVal] = useState(phone || '');
+
+  // Core
   const [h, setH] = useState(height_cm ? String(height_cm) : '');
   const [w, setW] = useState(weight_kg ? String(weight_kg) : '');
   const [g, setG] = useState(goal ? (goal === 'maintain' ? 'keep' : goal) : 'keep');
@@ -98,22 +117,21 @@ export default function ProfileTab() {
   };
 
   const preview = useMemo(() => {
-  const wn = Number(w);
-  if (!wn) return { tdee: null, target: null };
-  // Ước tính BMR đơn giản nếu thiếu sex/age/height
-  const actFactor = act === 'low' ? 1.2 : act === 'high' ? 1.7 : 1.45;
-  const bmrSimple = 24 * wn;
-  const tdeeEst = Math.round(bmrSimple * actFactor);
-  const adj = g === 'lose' ? -300 : g === 'gain' ? 300 : 0;
-  const kcal = tdeeEst + adj;
-  const target = {
-    kcal,
-    protein_g: Math.round((kcal * 0.30) / 4),
-    carbs_g: Math.round((kcal * 0.40) / 4),
-    fat_g: Math.round((kcal * 0.30) / 9),
-  };
-  return { tdee: tdeeEst, target };
-}, [w, act, g]);
+    const wn = Number(w);
+    if (!wn) return { tdee: null, target: null };
+    const actFactor = act === 'low' ? 1.2 : act === 'high' ? 1.7 : 1.45;
+    const bmrSimple = 24 * wn;
+    const tdeeEst = Math.round(bmrSimple * actFactor);
+    const adj = g === 'lose' ? -300 : g === 'gain' ? 300 : 0;
+    const kcal = tdeeEst + adj;
+    const target = {
+      kcal,
+      protein_g: Math.round((kcal * 0.30) / 4),
+      carbs_g: Math.round((kcal * 0.40) / 4),
+      fat_g: Math.round((kcal * 0.30) / 9),
+    };
+    return { tdee: tdeeEst, target };
+  }, [w, act, g]);
 
   const savedTarget = useMemo(() => {
     if (!tdee) return null;
@@ -160,8 +178,10 @@ export default function ProfileTab() {
       const base    = Math.round(bmrLike * actFactor);
       const adj     = base + (goalServer === 'lose' ? -300 : goalServer === 'gain' ? 300 : 0);
 
-      // Lưu hồ sơ mở rộng
+      // Lưu hồ sơ mở rộng (bổ sung display_name & phone)
       const payload = {
+        display_name: name?.trim() || undefined,
+        phone: phoneVal?.trim() || undefined,
         goal: goalServer,
         activity_level: actServer,
         kcal_target: adj,
@@ -177,6 +197,8 @@ export default function ProfileTab() {
       const fresh = await api('/api/profile');
       setMetrics({
         email: fresh.email,
+        display_name: fresh.display_name,
+        phone: fresh.phone,
         height_cm: fresh.height_cm,
         weight_kg: fresh.weight_kg,
         bmi: fresh.bmi,
@@ -209,16 +231,73 @@ export default function ProfileTab() {
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={{ padding: 16 }}>
-      {/* Header nhỏ */}
-      <View style={{ marginBottom: 12 }}>
-        <Text style={{ fontSize: 22, fontWeight: '800', color: C.text }}>Hồ sơ cá nhân</Text>
-        <Text style={{ color: C.sub, marginTop: 4 }}>Cập nhật thông tin để cá nhân hoá gợi ý tập luyện & dinh dưỡng.</Text>
-      </View>
+      {/* Header gradient với avatar & thông tin nhanh */}
+      <LinearGradient
+        colors={['#60a5fa', '#2563eb']}
+        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+        style={{ borderRadius: 18, padding: 16, marginBottom: 12 }}
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <View style={{
+            width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.25)',
+            alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)'
+          }}>
+            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 18 }}>
+              {initialsOf(name || display_name)}
+            </Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800' }}>
+              {name?.trim() || display_name || 'Người dùng'}
+            </Text>
+            <Text style={{ color: 'rgba(255,255,255,0.9)', marginTop: 2 }}>
+              {email || '(chưa có email)'}
+            </Text>
+          </View>
+        </View>
+        {/* Tóm tắt nhanh */}
+        <View style={{
+          flexDirection: 'row', gap: 12, marginTop: 12,
+          borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.25)', paddingTop: 12
+        }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: 'rgba(255,255,255,0.9)' }}>BMI</Text>
+            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 18 }}>
+              {(liveBMI ?? bmi) ?? '—'}
+            </Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: 'rgba(255,255,255,0.9)' }}>TDEE ước tính</Text>
+            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 18 }}>
+              {(preview.tdee ?? tdee) ? `${preview.tdee ?? tdee}` : '—'}
+            </Text>
+          </View>
+        </View>
+      </LinearGradient>
 
-      {/* Thông tin liên hệ */}
-      <Card title="Thông tin liên hệ">
+      {/* Thông tin liên hệ & cơ bản */}
+      <Card title="Thông tin cơ bản">
         <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap' }}>
-          <View style={{ flex: 1, minWidth: 150 }}>
+          <View style={{ flex: 1, minWidth: 160 }}>
+            <Text style={{ color: C.sub, marginBottom: 6 }}>Tên hiển thị</Text>
+            <TextInput
+              value={name} onChangeText={setName} placeholder="Ví dụ: Khoa Dang"
+              placeholderTextColor={C.muted}
+              style={{ borderWidth: 1, borderColor: C.border, borderRadius: R.md, padding: 10, backgroundColor: '#fff' }}
+            />
+          </View>
+          <View style={{ flex: 1, minWidth: 160 }}>
+            <Text style={{ color: C.sub, marginBottom: 6 }}>Số điện thoại</Text>
+            <TextInput
+              value={phoneVal} onChangeText={setPhoneVal} keyboardType="phone-pad" placeholder="09xxxxxxxx"
+              placeholderTextColor={C.muted}
+              style={{ borderWidth: 1, borderColor: C.border, borderRadius: R.md, padding: 10, backgroundColor: '#fff' }}
+            />
+          </View>
+        </View>
+
+        <View style={{ flexDirection: 'row', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
+          <View style={{ flex: 1, minWidth: 160 }}>
             <Text style={{ color: C.sub, marginBottom: 6 }}>Email</Text>
             <View style={{ borderWidth: 1, borderColor: C.border, borderRadius: R.md, padding: 10, backgroundColor: '#F8FAFF' }}>
               <Text style={{ color: C.text }}>{email || '(chưa có)'}</Text>
@@ -243,7 +322,7 @@ export default function ProfileTab() {
         </View>
       </Card>
 
-      {/* Thông số cơ thể & mục tiêu */}
+      {/* Thể trạng & mục tiêu */}
       <Card title="Thể trạng & mục tiêu" desc="Nhập chiều cao, cân nặng; chọn mục tiêu & mức độ hoạt động.">
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <View style={{ flex: 1 }}>

@@ -7,7 +7,7 @@ import Svg, { Circle } from 'react-native-svg';
 import { api } from '../../../src/lib/api';
 import { EVENTS, on } from '../../../src/lib/events';
 
-const C = { bg:'#F6F7FB', card:'#fff', b:'#e5e7eb', text:'#0f172a', sub:'#64748b', primary:'#23c483' };
+const C = { bg:'#F6F7FB', card:'#fff', b:'#e5e7eb', text:'#0f172a', sub:'#64748b', primary:'#2563eb' };
 
 // ---------- helpers ----------
 function clamp(v, min, max){ return Math.max(min, Math.min(max, v)); }
@@ -47,6 +47,16 @@ function Ring({ value, max, size=176, stroke=14, color='#ffffff' }) {
         transform={`rotate(-90 ${size/2} ${size/2})`}
       />
     </Svg>
+  );
+}
+
+function Shortcut({ href, title }) {
+  return (
+    <Link href={href} asChild>
+      <Pressable style={{ backgroundColor:C.card, borderWidth:1, borderColor:C.b, paddingVertical:10, paddingHorizontal:12, borderRadius:12 }}>
+        <Text style={{ color:C.text, fontWeight:'700' }}>{title}</Text>
+      </Pressable>
+    </Link>
   );
 }
 
@@ -98,14 +108,14 @@ export default function NutritionHome(){
 
   return (
     <ScrollView style={{ flex:1, backgroundColor: C.bg }} contentContainerStyle={{ paddingBottom: 24 }}>
-      {}
+      {/* Hero gradient: đồng bộ tab tập luyện (xanh dương) */}
       <LinearGradient
-        colors={['#45e0b0', '#2ec59c']}
+        colors={['#60a5fa', '#2563eb']}
         start={{x:0,y:0}} end={{x:0,y:1}}
         style={{ margin:16, borderRadius:18, padding:18, overflow:'hidden' }}
       >
-        <Text style={{ color:'#fff', opacity:0.9, textAlign:'center', letterSpacing:1 }}>
-          {(profile?.goal || 'CLASSIC DIETING').toString().toUpperCase()}
+        <Text style={{ color:'#eaf2ff', opacity:0.95, textAlign:'center', letterSpacing:1, fontWeight:'700' }}>
+          {(profile?.goal || 'MAINTAIN').toString().toUpperCase()}
         </Text>
 
         <View style={{ alignItems:'center', marginTop:6 }}>
@@ -113,57 +123,56 @@ export default function NutritionHome(){
             <Ring value={kcalLeft} max={kcalTarget} />
             <View style={{ position:'absolute', alignItems:'center' }}>
               <Text style={{ color:'#fff', fontSize:34, fontWeight:'800' }}>{kcalLeft}</Text>
-              <Text style={{ color:'rgba(255,255,255,0.9)' }}>KCAL LEFT</Text>
+              <Text style={{ color:'rgba(255,255,255,0.9)', fontWeight:'700' }}>KCAL LEFT</Text>
             </View>
           </View>
         </View>
 
         {/* EATEN - BURNED */}
-        <View style={{ flexDirection:'row', justifyContent:'space-between', marginTop:10 }}>
+        <View style={{ flexDirection:'row', justifyContent:'space-between', marginTop:12 }}>
           <View style={{ alignItems:'center', flex:1 }}>
             <Text style={{ color:'#fff', fontWeight:'800' }}>{kcalIn}</Text>
-            <Text style={{ color:'rgba(255,255,255,0.85)' }}>EATEN</Text>
+            <Text style={{ color:'rgba(255,255,255,0.9)', fontWeight:'600' }}>EATEN</Text>
           </View>
           <View style={{ alignItems:'center', flex:1 }}>
             <Text style={{ color:'#fff', fontWeight:'800' }}>{kcalOut}</Text>
-            <Text style={{ color:'rgba(255,255,255,0.85)' }}>BURNED</Text>
+            <Text style={{ color:'rgba(255,255,255,0.9)', fontWeight:'600' }}>BURNED</Text>
           </View>
         </View>
 
         {/* CARBS / PROTEIN / FAT LEFT */}
         <View style={{
           flexDirection:'row', justifyContent:'space-between',
-          marginTop:14, paddingTop:12, borderTopWidth:1, borderColor:'rgba(255,255,255,0.25)'
+          marginTop:14, paddingTop:12, borderTopWidth:1, borderColor:'rgba(255,255,255,0.28)'
         }}>
           <View style={{ alignItems:'center', flex:1 }}>
             <Text style={{ color:'#fff', fontWeight:'800' }}>{left.c}g</Text>
-            <Text style={{ color:'rgba(255,255,255,0.9)' }}>CARBS</Text>
+            <Text style={{ color:'rgba(255,255,255,0.95)', fontWeight:'600' }}>CARBS</Text>
           </View>
           <View style={{ alignItems:'center', flex:1 }}>
             <Text style={{ color:'#fff', fontWeight:'800' }}>{left.p}g</Text>
-            <Text style={{ color:'rgba(255,255,255,0.9)' }}>PROTEIN</Text>
+            <Text style={{ color:'rgba(255,255,255,0.95)', fontWeight:'600' }}>PROTEIN</Text>
           </View>
           <View style={{ alignItems:'center', flex:1 }}>
             <Text style={{ color:'#fff', fontWeight:'800' }}>{left.f}g</Text>
-            <Text style={{ color:'rgba(255,255,255,0.9)' }}>FAT</Text>
+            <Text style={{ color:'rgba(255,255,255,0.95)', fontWeight:'600' }}>FAT</Text>
           </View>
         </View>
 
-        {/* Fiber hint nho nhỏ */}
         <Text style={{ textAlign:'center', color:'#fff', marginTop:10 }}>
           Fiber left: <Text style={{ fontWeight:'800' }}>{left.fib} g</Text>
         </Text>
       </LinearGradient>
 
-      {/* ===== Bữa hôm nay (rút gọn & sạch) ===== */}
+      {/* ===== Bữa hôm nay ===== */}
       <View style={{ marginHorizontal:16, backgroundColor:C.card, borderWidth:1, borderColor:C.b, borderRadius:14, padding:14 }}>
-        <Text style={{ fontWeight:'700', color:C.text, marginBottom:6 }}>Bữa hôm nay</Text>
+        <Text style={{ fontWeight:'800', color:C.text, marginBottom:6 }}>Bữa hôm nay</Text>
         {meals.length ? meals.map(m=>{
           const sum = k => (m.items||[]).reduce((s,x)=>s+Number(x[k]||0),0);
           const kcal = sum('kcal'), sp=sum('protein_g'), sc=sum('carbs_g'), sf=sum('fat_g');
           const label = m.meal_type==='breakfast'?'Bữa sáng':m.meal_type==='lunch'?'Bữa trưa':m.meal_type==='dinner'?'Bữa tối':m.meal_type==='snack'?'Bữa phụ':m.meal_type;
           return (
-            <View key={m.id} style={{ paddingVertical:8, borderTopWidth:1, borderTopColor:'#F3F4F6' }}>
+            <View key={m.id} style={{ paddingVertical:10, borderTopWidth:1, borderTopColor:'#F3F4F6' }}>
               <Text style={{ fontWeight:'700', color:C.text }}>{label}</Text>
               {Array.isArray(m.items) && m.items.slice(0,3).map(it=>(
                 <Text key={it.id} style={{ color:C.sub, marginTop:2 }}>- {it.name} • {it.grams}g</Text>
@@ -176,12 +185,12 @@ export default function NutritionHome(){
         }) : <Text style={{ color:C.sub }}>Chưa có bữa nào hôm nay.</Text>}
       </View>
 
-      {/* ===== Lối tắt ===== */}
+      {/* ===== Lối tắt (đồng bộ style) ===== */}
       <View style={{ flexDirection:'row', gap:10, marginTop:12, marginHorizontal:16, flexWrap:'wrap' }}>
-        <Link href="/nutrition/log"   asChild><Pressable style={{ backgroundColor:C.card, borderWidth:1, borderColor:C.b, padding:12, borderRadius:10 }}><Text>Nhật ký bữa ăn</Text></Pressable></Link>
-        <Link href="/nutrition/foods" asChild><Pressable style={{ backgroundColor:C.card, borderWidth:1, borderColor:C.b, padding:12, borderRadius:10 }}><Text>Thêm món</Text></Pressable></Link>
-        <Link href="/nutrition/plan"  asChild><Pressable style={{ backgroundColor:C.card, borderWidth:1, borderColor:C.b, padding:12, borderRadius:10 }}><Text>Gợi ý thực đơn</Text></Pressable></Link>
-        <Link href="/nutrition/stats" asChild><Pressable style={{ backgroundColor:C.card, borderWidth:1, borderColor:C.b, padding:12, borderRadius:10 }}><Text>Thống kê</Text></Pressable></Link>
+        <Shortcut href="/nutrition/log"   title="Nhật ký bữa ăn" />
+        <Shortcut href="/nutrition/foods" title="Thêm món" />
+        <Shortcut href="/nutrition/plan"  title="Gợi ý thực đơn" />
+        <Shortcut href="/nutrition/stats" title="Thống kê" />
       </View>
     </ScrollView>
   );

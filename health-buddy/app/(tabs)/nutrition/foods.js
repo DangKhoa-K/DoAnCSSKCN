@@ -1,10 +1,38 @@
-// SỬA: di chuyển emit(EVENTS.NUTRITION_UPDATED) chỉ chạy sau khi thêm món
+// app/(tabs)/nutrition/foods.js
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, FlatList, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, Pressable, Text, TextInput, View } from 'react-native';
 import { api } from '../../../src/lib/api';
 import { emit, EVENTS } from '../../../src/lib/events';
 
-const C = { bg:'#F6F7FB', card:'#fff', b:'#e5e7eb', text:'#0f172a', sub:'#64748b' };
+const C = { bg:'#F6F7FB', card:'#fff', b:'#e5e7eb', text:'#0f172a', sub:'#64748b', primary:'#2563eb' };
+
+function PrimaryButton({ title, onPress, disabled }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={{
+        backgroundColor: disabled ? '#9ca3af' : C.primary,
+        paddingVertical:10, paddingHorizontal:14, borderRadius:10, alignItems:'center'
+      }}
+    >
+      <Text style={{ color:'#fff', fontWeight:'800' }}>{title}</Text>
+    </Pressable>
+  );
+}
+
+function Input({ value, onChangeText, placeholder, keyboardType, style }) {
+  return (
+    <TextInput
+      value={value}
+      onChangeText={onChangeText}
+      placeholder={placeholder}
+      placeholderTextColor="#9ca3af"
+      keyboardType={keyboardType}
+      style={{ backgroundColor:'#fff', borderWidth:1, borderColor:C.b, borderRadius:10, padding:10, ...style }}
+    />
+  );
+}
 
 export default function Foods() {
   const [q, setQ] = useState('');
@@ -50,10 +78,10 @@ export default function Foods() {
       if (!body.name_vi || !body.portion_g) {
         return Alert.alert('Thiếu thông tin', 'Tên món & khẩu phần bắt buộc.');
       }
-      await api('/api/foods', { method: 'POST', body: JSON.stringify(body) });
+      await api('/api/foods', { method: 'POST', body });
       setName(''); setPortion('100'); setP('0'); setC('0'); setF('0'); setFib('0');
       await load();
-      emit(EVENTS.NUTRITION_UPDATED); // CHỈ GỌI SAU KHI THÊM THÀNH CÔNG
+      emit(EVENTS.NUTRITION_UPDATED);
       Alert.alert('Đã thêm món');
     } catch (e) {
       console.error('Add food error:', e);
@@ -69,39 +97,25 @@ export default function Foods() {
           <Text style={{ fontSize: 22, fontWeight: '800', color: C.text }}>Kho món ăn</Text>
           <Text style={{ color: C.sub, marginTop: 4 }}>Tìm, xem & thêm món phổ biến.</Text>
 
-          <TextInput
-            value={q}
-            onChangeText={setQ}
-            placeholder="Tìm kiếm…"
-            placeholderTextColor="#9ca3af"
-            style={{ marginTop: 10, backgroundColor: '#fff', borderWidth: 1, borderColor: C.b, borderRadius: 10, padding: 10 }}
-          />
+          <Input value={q} onChangeText={setQ} placeholder="Tìm kiếm…" style={{ marginTop: 10 }} />
 
-          <View style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: C.b, borderRadius: 12, padding: 12, marginTop: 12 }}>
+          <View style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: C.b, borderRadius: 14, padding: 12, marginTop: 12 }}>
             <Text style={{ fontWeight: '800', color: C.text }}>Thêm món mới</Text>
-            <TextInput
-              value={name} onChangeText={setName} placeholder="Tên món" placeholderTextColor="#9ca3af"
-              style={{ marginTop: 8, backgroundColor: '#fff', borderWidth: 1, borderColor: C.b, borderRadius: 8, padding: 8 }}
-            />
-            <TextInput
-              value={portion} onChangeText={setPortion} keyboardType="numeric" placeholder="Khẩu phần (g)"
-              style={{ marginTop: 8, backgroundColor: '#fff', borderWidth: 1, borderColor: C.b, borderRadius: 8, padding: 8 }}
-            />
+            <Input value={name} onChangeText={setName} placeholder="Tên món" style={{ marginTop: 8 }} />
+            <Input value={portion} onChangeText={setPortion} keyboardType="numeric" placeholder="Khẩu phần (g)" style={{ marginTop: 8 }} />
             <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-              <TextInput value={p} onChangeText={setP} keyboardType="numeric" placeholder="Protein (g)"
-                style={{ flex: 1, backgroundColor: '#fff', borderWidth: 1, borderColor: C.b, borderRadius: 8, padding: 8 }} />
-              <TextInput value={c} onChangeText={setC} keyboardType="numeric" placeholder="Carb (g)"
-                style={{ flex: 1, backgroundColor: '#fff', borderWidth: 1, borderColor: C.b, borderRadius: 8, padding: 8 }} />
+              <Input value={p} onChangeText={setP} keyboardType="numeric" placeholder="Protein (g)" style={{ flex:1 }} />
+              <Input value={c} onChangeText={setC} keyboardType="numeric" placeholder="Carb (g)" style={{ flex:1 }} />
             </View>
             <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-              <TextInput value={f} onChangeText={setF} keyboardType="numeric" placeholder="Fat (g)"
-                style={{ flex: 1, backgroundColor: '#fff', borderWidth: 1, borderColor: C.b, borderRadius: 8, padding: 8 }} />
-              <TextInput value={fib} onChangeText={setFib} keyboardType="numeric" placeholder="Xơ (g)"
-                style={{ flex: 1, backgroundColor: '#fff', borderWidth: 1, borderColor: C.b, borderRadius: 8, padding: 8 }} />
+              <Input value={f} onChangeText={setF} keyboardType="numeric" placeholder="Fat (g)" style={{ flex:1 }} />
+              <Input value={fib} onChangeText={setFib} keyboardType="numeric" placeholder="Xơ (g)" style={{ flex:1 }} />
             </View>
-            <Text style={{ color: C.sub, marginTop: 6 }}>~ Ước tính: <Text style={{ color: C.text, fontWeight: '800' }}>{kcal} kcal</Text> / phần</Text>
-            <View style={{ marginTop: 8 }}>
-              <Button title="Lưu món" onPress={add} />
+            <Text style={{ color: C.sub, marginTop: 6 }}>
+              ~ Ước tính: <Text style={{ color: C.text, fontWeight: '800' }}>{kcal} kcal</Text> / phần
+            </Text>
+            <View style={{ marginTop: 10 }}>
+              <PrimaryButton title="Lưu món" onPress={add} />
             </View>
           </View>
         </View>

@@ -7,9 +7,10 @@
       "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzemNiZHV4anFqY3VjcGlmcGRkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg4MDE3NTEsImV4cCI6MjA3NDM3Nzc1MX0.lwAKHSx82ZZKO_zhcx5NizfTzS4BHWeWh8tNYd5rWF8",
       "EXPO_PUBLIC_API_BASE": "http://10.0.2.2:8088",
       "extra": {
-      "API_BASE": "",
-      "API_BASE_ANDROID": "http://10.0.2.2:8088",
-      "API_BASE_WEB": "http://localhost:8088"}
+        "API_BASE": "",
+        "API_BASE_ANDROID": "http://10.0.2.2:8088",
+        "API_BASE_WEB": "http://localhost:8088"
+      }
     },
     "version": "1.0.0",
     "orientation": "portrait",
@@ -28,7 +29,8 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.anonymous.healthbuddy"
     },
     "web": {
       "output": "static",

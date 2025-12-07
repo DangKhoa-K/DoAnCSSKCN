@@ -1,11 +1,24 @@
+// app/(tabs)/workouts/reminders-screen.js
+// Chỉ lưu nhắc cho 1 tuần, và giữ kênh âm thanh mới.
+
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, Platform, Pressable, Text, View } from 'react-native';
+import { Alert, FlatList, Platform, Pressable, Text, TextInput, View } from 'react-native';
 import { api } from '../../../src/lib/api';
-import { ensurePermissions, scheduleWeeklyReminder, setHandler, setupAndroidChannel } from '../../../src/lib/notifications-local';
+import {
+  cancelAllScheduled,
+  ensurePermissions,
+  listScheduled,
+  presentNow,
+  scheduleWeeklyAbsolute,
+  setHandler,
+  setupAndroidChannel,
+} from '../../../src/lib/notifications-local';
 
 const C = { bg:'#F0F6FF', card:'#FFFFFF', b:'#DCE7FF', text:'#0F172A', sub:'#64748B', primary:'#2563EB' };
+const isIOS = Platform.OS === 'ios';
+const isWeb = Platform.OS === 'web';
 
 function initRows() {
   return [
@@ -20,9 +33,8 @@ export default function RemindersScreen() {
   const [rows, setRows] = useState(initRows());
   const [saving, setSaving] = useState(false);
   const [editingIdx, setEditingIdx] = useState(null);
-  const isIOS = Platform.OS === 'ios';
 
-  useEffect(() => { setHandler(); }, []);
+  useEffect(() => { if (!isWeb) setHandler(); }, []);
 
   const loadPlan = useCallback(async ()=>{
     try {
@@ -34,8 +46,9 @@ export default function RemindersScreen() {
 
   useEffect(()=>{ loadPlan(); },[loadPlan]);
 
-  function openPicker(idx) {
-    setEditingIdx(idx);
+  function clamp(n,min,max){ const x=Number(n); return Number.isFinite(x)? Math.min(max, Math.max(min, x)) : min; }
+  function setRowTime(idx, hour, minute){
+    setRows(prev => prev.map((x,i)=> i===idx ? { ...x, hour: clamp(hour,0,23), minute: clamp(minute,0,59) } : x));
   }
 
   function onAndroidChange(event, selectedDate) {
@@ -45,7 +58,7 @@ export default function RemindersScreen() {
     if (selectedDate) {
       const hour = selectedDate.getHours();
       const minute = selectedDate.getMinutes();
-      setRows(prev => prev.map((x,i) => i===idx ? { ...x, hour, minute } : x));
+      setRowTime(idx, hour, minute);
     }
     setEditingIdx(null);
   }
@@ -55,7 +68,7 @@ export default function RemindersScreen() {
     if (idx == null || !selectedDate) return;
     const hour = selectedDate.getHours();
     const minute = selectedDate.getMinutes();
-    setRows(prev => prev.map((x,i) => i===idx ? { ...x, hour, minute } : x));
+    setRowTime(idx, hour, minute);
   }
 
   function closeIOSPicker() {
@@ -71,30 +84,36 @@ export default function RemindersScreen() {
       if (!okPerm) return Alert.alert('Cần quyền', 'Hãy cấp quyền thông báo cho ứng dụng.');
       await setupAndroidChannel();
 
-      // Local notifications lặp hàng tuần
+      await cancelAllScheduled();
+
+      // Chỉ đặt cho 1 tuần tới
       for (const r of rows) {
-        await scheduleWeeklyReminder({
+        await scheduleWeeklyAbsolute({
           weekday: r.dow, hour: r.hour, minute: r.minute,
           title: 'Tập luyện',
-          body: `Ngày D${r.dow}: Bắt đầu tập lúc ${String(r.hour).padStart(2,'0')}:${String(r.minute).padStart(2,'0')}`
+          body: `D${r.dow}: ${String(r.hour).padStart(2,'0')}:${String(r.minute).padStart(2,'0')}`,
+          weeksAhead: 1
         });
       }
 
-      // Gửi MẢNG JSON lên backend
+      // Lưu lên server như cũ
       const payload = rows.map(r => ({
         time_of_day: `${String(r.hour).padStart(2,'0')}:${String(r.minute).padStart(2,'0')}:00`,
         note: `D${r.dow} • kế hoạch ${planId}`,
         plan_id: Number(planId) || null,
-        dow: r.dow
+        dow: [Number(r.dow)]
       }));
-
       await api('/api/workouts/reminders', {
         method:'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
 
-      Alert.alert('Đã đặt nhắc', 'Nhắc lịch tập đã được thiết lập hàng tuần và lưu trên server.');
+      const scheduled = await listScheduled();
+      Alert.alert('Đã đặt nhắc', Array.isArray(scheduled)
+        ? `Đặt xong ${scheduled.length} lịch trên thiết bị.`
+        : `Đặt xong ${scheduled} lịch trên trình duyệt.`
+      );
     } catch (e) {
       Alert.alert('Lỗi', e?.message || 'Không đặt được nhắc');
     } finally {
@@ -102,32 +121,72 @@ export default function RemindersScreen() {
     }
   }
 
+  async function testNow() {
+    const okPerm = await ensurePermissions();
+    if (!okPerm) return Alert.alert('Cần quyền', 'Hãy cấp quyền thông báo cho ứng dụng.');
+    await setupAndroidChannel();
+    await presentNow('Test ngay', 'Thông báo kiểm tra tức thì');
+  }
+
   const title = useMemo(()=> plan ? `Nhắc nhở • ${plan.title}` : 'Nhắc nhở lịch tập', [plan]);
 
   return (
     <View style={{ flex:1, backgroundColor:C.bg, padding:16 }}>
       <Text style={{ fontSize:22, fontWeight:'800', color:C.text }}>{title}</Text>
-      <Text style={{ color:C.sub, marginTop:4 }}>Chọn giờ bắt đầu cho từng ngày (lặp hàng tuần).</Text>
+      <Text style={{ color:C.sub, marginTop:4 }}>
+        Đặt giờ cho từng ngày (chỉ 1 tuần tới). Trên web: nhập HH/MM trực tiếp.
+      </Text>
 
       <View style={{ backgroundColor:C.card, borderWidth:1, borderColor:C.b, borderRadius:16, padding:12, marginTop:12 }}>
         {rows.map((r, idx)=>(
           <View key={r.dow} style={{ flexDirection:'row', alignItems:'center', gap:10, marginBottom:8 }}>
             <Text style={{ width:60, color:C.text, fontWeight:'600' }}>{`D${r.dow}`}</Text>
-            <Text style={{ flex:1, color:C.sub }}>
-              {String(r.hour).padStart(2,'0')}:{String(r.minute).padStart(2,'0')}
-            </Text>
-            <Pressable onPress={() => openPicker(idx)} style={{ borderWidth:1, borderColor:C.b, paddingVertical:6, paddingHorizontal:10, borderRadius:8, backgroundColor:'#fff' }}>
-              <Text style={{ color:C.text, fontWeight:'600' }}>Chọn giờ</Text>
-            </Pressable>
+            {isWeb ? (
+              <View style={{ flexDirection:'row', alignItems:'center', gap:8, flex:1 }}>
+                <TextInput
+                  value={String(r.hour)}
+                  onChangeText={(t)=> setRowTime(idx, t.replace(/\D/g,''), r.minute)}
+                  keyboardType="numeric"
+                  maxLength={2}
+                  placeholder="HH"
+                  placeholderTextColor={C.sub}
+                  style={{ width:60, borderWidth:1, borderColor:C.b, borderRadius:8, paddingVertical:6, paddingHorizontal:10, backgroundColor:'#fff', color:C.text }}
+                />
+                <Text style={{ color:C.text }}>:</Text>
+                <TextInput
+                  value={String(r.minute)}
+                  onChangeText={(t)=> setRowTime(idx, r.hour, t.replace(/\D/g,''))}
+                  keyboardType="numeric"
+                  maxLength={2}
+                  placeholder="MM"
+                  placeholderTextColor={C.sub}
+                  style={{ width:60, borderWidth:1, borderColor:C.b, borderRadius:8, paddingVertical:6, paddingHorizontal:10, backgroundColor:'#fff', color:C.text }}
+                />
+              </View>
+            ) : (
+              <>
+                <Text style={{ flex:1, color:C.sub }}>
+                  {String(r.hour).padStart(2,'0')}:{String(r.minute).padStart(2,'0')}
+                </Text>
+                <Pressable onPress={() => setEditingIdx(idx)} style={{ borderWidth:1, borderColor:C.b, paddingVertical:6, paddingHorizontal:10, borderRadius:8, backgroundColor:'#fff' }}>
+                  <Text style={{ color:C.text, fontWeight:'600' }}>Chọn giờ</Text>
+                </Pressable>
+              </>
+            )}
           </View>
         ))}
 
         <Pressable onPress={saveAll} disabled={saving} style={{ marginTop:8, backgroundColor:C.primary, paddingVertical:10, paddingHorizontal:12, borderRadius:8, opacity:saving?0.7:1 }}>
-          <Text style={{ color:'#fff', fontWeight:'700', textAlign:'center' }}>{saving ? 'Đang lưu…' : 'Lưu nhắc cho 7 ngày'}</Text>
+          <Text style={{ color:'#fff', fontWeight:'700', textAlign:'center' }}>{saving ? 'Đang lưu…' : 'Lưu nhắc cho 1 tuần'}</Text>
+        </Pressable>
+
+        
+
+        <Pressable onPress={testNow} style={{ marginTop:8, borderWidth:1, borderColor:'#16A34A', paddingVertical:10, borderRadius:8, backgroundColor:'#ECFDF5' }}>
+          <Text style={{ color:'#065F46', fontWeight:'700', textAlign:'center' }}>Bắn thông báo NGAY</Text>
         </Pressable>
       </View>
 
-      {/* Android: dialog picker */}
       {Platform.OS === 'android' && editingIdx != null && (
         <DateTimePicker
           value={new Date(2000, 0, 1, rows[editingIdx].hour, rows[editingIdx].minute)}
@@ -138,7 +197,6 @@ export default function RemindersScreen() {
         />
       )}
 
-      {/* iOS: overlay picker */}
       {isIOS && editingIdx != null && (
         <View style={{
           position:'absolute', left:0, right:0, bottom:0, top:0,

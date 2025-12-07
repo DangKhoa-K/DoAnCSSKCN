@@ -16,25 +16,17 @@ export async function api(path, opts = {}, retry = 0) {
   const headers = {
     Accept: 'application/json',
     ...(opts.headers || {}),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {})
   };
 
   let body = opts.body;
   const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
 
-  // Chỉ stringify khi body là object/mảng
+  // Stringify khi body là object/mảng; giữ nguyên khi là chuỗi JSON; không bao giờ String(body).
   if (body && !isFormData && typeof body !== 'string') {
     headers['Content-Type'] = headers['Content-Type'] || 'application/json';
-    try {
-      body = JSON.stringify(body);
-    } catch (e) {
-      // Không gửi chuỗi “[object Object]”; ném lỗi để sửa payload
-      const err = new Error(`Không serialize được body sang JSON: ${e?.message || 'unknown'}`);
-      err.name = 'ApiJsonSerializeError';
-      throw err;
-    }
+    body = JSON.stringify(body);
   } else if (typeof body === 'string') {
-    // Nếu đã là chuỗi JSON, set Content-Type nếu thiếu
     const t = body.trim();
     if (!isFormData && (t.startsWith('{') || t.startsWith('['))) {
       headers['Content-Type'] = headers['Content-Type'] || 'application/json';
@@ -42,6 +34,7 @@ export async function api(path, opts = {}, retry = 0) {
   }
 
   const url = path.startsWith('http') ? path : `${API_BASE}${path}`;
+
   let res;
   try {
     res = await fetch(url, { ...opts, headers, body });
@@ -58,7 +51,6 @@ export async function api(path, opts = {}, retry = 0) {
   try { data = raw ? JSON.parse(raw) : null; } catch { data = raw; }
 
   const ct = res.headers.get('content-type') || '';
-
   if (!res.ok) {
     const msg =
       (data && typeof data === 'object' && (data.error || data.message)) ||

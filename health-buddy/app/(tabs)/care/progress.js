@@ -3,9 +3,40 @@ import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import { api } from '../../../src/lib/api';
 
-const C = { bg:'#F6F7FB', card:'#fff', b:'#e5e7eb', text:'#0f172a', sub:'#64748b', primary:'#2563eb' };
+const C = { bg:'#F0F6FF', card:'#fff', b:'#eef2ff', text:'#0f172a', sub:'#64748b', primary:'#2563eb' };
 
 function daysBack(n){ const d=new Date(); d.setDate(d.getDate()-n); return d.toISOString().slice(0,10); }
+
+function Card({ title, children }) {
+  return (
+    <View style={{
+      backgroundColor:C.card, borderRadius:16, padding:14, marginTop:12,
+      borderWidth:1, borderColor:C.b, shadowColor:'#000', shadowOpacity:0.06, shadowRadius:10, shadowOffset:{width:0,height:4}
+    }}>
+      <Text style={{ fontWeight:'800', color:C.text, marginBottom:6 }}>{title}</Text>
+      {children}
+    </View>
+  );
+}
+
+function Bars({ data, unit, max }) {
+  return (
+    <View style={{ marginTop:8 }}>
+      {data.map((d,i)=> {
+        const w = Math.max(4, Math.min(100, (d.value / max) * 100));
+        return (
+          <View key={i} style={{ flexDirection:'row', alignItems:'center', marginBottom:6 }}>
+            <Text style={{ width:42, color:C.sub }}>{d.label}</Text>
+            <View style={{ flex:1, height:10, backgroundColor:'#eef2ff', borderRadius:6, overflow:'hidden' }}>
+              <View style={{ width:`${w}%`, height:'100%', backgroundColor:C.primary }} />
+            </View>
+            <Text style={{ width:60, textAlign:'right', color:C.sub }}>{d.value}{unit}</Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
 
 export default function Progress() {
   const router = useRouter();
@@ -47,14 +78,17 @@ export default function Progress() {
   const avgStress = useMemo(()=> (stress.reduce((t,x)=>t+x.score,0)/Math.max(1,range)).toFixed(1), [stress, range]);
 
   return (
-    <ScrollView style={{ flex:1, backgroundColor:C.bg, padding:16 }}>
-      <Text onPress={()=>router.back()} style={{ color:'#2563eb', marginBottom:8 }}>‹ Quay lại</Text>
+    <ScrollView style={{ flex:1, backgroundColor:C.bg }} contentContainerStyle={{ padding:16 }}>
+      <Text onPress={()=>router.back()} style={{ color:C.primary, marginBottom:8 }}>‹ Quay lại</Text>
       <Text style={{ fontSize:22, fontWeight:'800', color:C.text }}>Tiến độ sức khỏe</Text>
       <Text style={{ color:C.sub, marginTop:4 }}>{range} ngày gần nhất</Text>
 
       <View style={{ flexDirection:'row', gap:8, marginTop:8 }}>
         {[7,30,90].map(n=>(
-          <Pressable key={n} onPress={()=>setRange(n)} style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:999, borderWidth:1, borderColor: range===n? C.primary:C.b, backgroundColor: range===n? '#EAF1FF':'#fff' }}>
+          <Pressable key={n} onPress={()=>setRange(n)} style={{
+            paddingVertical:8, paddingHorizontal:12, borderRadius:999, borderWidth:1,
+            borderColor: range===n? C.primary:C.b, backgroundColor: range===n? '#EAF1FF':'#fff'
+          }}>
             <Text style={{ color: range===n? C.primary:C.text, fontWeight:'700' }}>{n} ngày</Text>
           </Pressable>
         ))}
@@ -100,31 +134,3 @@ export default function Progress() {
     </ScrollView>
   );
 }
-
-function Card({ title, children }) {
-  return (
-    <View style={{ backgroundColor:C.card, borderWidth:1, borderColor:C.b, borderRadius:14, padding:14, marginTop:12 }}>
-      <Text style={{ fontWeight:'800', color:C.text, marginBottom:6 }}>{title}</Text>
-      {children}
-    </View>
-  );
-}
-
-function Bars({ data, unit, max }) {
-  return (
-    <View style={{ marginTop:8 }}>
-      {data.map((d,i)=> {
-        const w = Math.max(4, Math.min(100, (d.value / max) * 100));
-        return (
-          <View key={i} style={{ flexDirection:'row', alignItems:'center', marginBottom:6 }}>
-            <Text style={{ width:42, color:'#64748b' }}>{d.label}</Text>
-            <View style={{ flex:1, height:10, backgroundColor:'#eef2ff', borderRadius:6, overflow:'hidden' }}>
-              <View style={{ width:`${w}%`, height:'100%', backgroundColor:'#2563eb' }} />
-            </View>
-            <Text style={{ width:60, textAlign:'right', color:'#64748b' }}>{d.value}{unit}</Text>
-          </View>
-        );
-      })}
-    </View>
-  );
-}             

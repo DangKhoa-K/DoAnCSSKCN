@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
 import { api } from '../../../src/lib/api';
-import { emit, EVENTS } from '../../../src/lib/events'; // [THÊM] phát sự kiện cho Nhật ký
+import { emit, EVENTS } from '../../../src/lib/events';
 
 const C = {
   bg: '#F6F7FB',
@@ -15,6 +15,15 @@ const C = {
   danger: '#dc2626'
 };
 
+function PrimaryButton({ title, onPress, disabled, tone='primary' }) {
+  const bg = tone==='primary' ? C.primary : tone==='success' ? C.success : '#9ca3af';
+  return (
+    <Pressable onPress={onPress} disabled={disabled} style={{ backgroundColor: disabled ? '#9ca3af' : bg, paddingVertical:10, paddingHorizontal:16, borderRadius:10 }}>
+      <Text style={{ color:'#fff', fontWeight:'800', textAlign:'center' }}>{title}</Text>
+    </Pressable>
+  );
+}
+
 export default function MealPlanSuggest() {
   const [profile, setProfile] = useState(null);
   const [plan, setPlan] = useState(null);
@@ -22,9 +31,7 @@ export default function MealPlanSuggest() {
   const [saving, setSaving] = useState(false);
   const [fetchingProfile, setFetchingProfile] = useState(false);
 
-  useEffect(() => {
-    loadProfile();
-  }, []);
+  useEffect(() => { loadProfile(); }, []);
 
   async function loadProfile() {
     try {
@@ -57,13 +64,9 @@ export default function MealPlanSuggest() {
     }
     try {
       setLoading(true);
-      console.log('[makeSuggest] profile snapshot:', profile);
       const r = await api('/api/recs/mealplan');
-      if (r?.meals?.length) {
-        setPlan(r);
-      } else {
-        Alert.alert('Không có thực đơn', 'Server chưa trả về thực đơn phù hợp.');
-      }
+      if (r?.meals?.length) setPlan(r);
+      else Alert.alert('Không có thực đơn', 'Server chưa trả về thực đơn phù hợp.');
     } catch (e) {
       console.error('makeSuggest error:', e);
       Alert.alert('Lỗi tạo gợi ý', e.message || 'Không thể tạo thực đơn.');
@@ -86,14 +89,9 @@ export default function MealPlanSuggest() {
         target: plan.target,
         meals: plan.meals
       };
-      const resp = await api('/api/nutrition/mealplans', {
-        method: 'POST',
-        body: JSON.stringify(body)
-      });
+      const resp = await api('/api/nutrition/mealplans', { method: 'POST', body });
       if (resp?.ok || resp?.id) {
-        // [THÊM] Báo cho Nhật ký bữa ăn reload và ưu tiên món trong kế hoạch vừa lưu
         emit(EVENTS.NUTRITION_UPDATED);
-
         Alert.alert('Đã lưu', 'Kế hoạch thực đơn đã được lưu.');
         setPlan(null);
       } else {
@@ -108,63 +106,17 @@ export default function MealPlanSuggest() {
   }
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: C.bg }}
-      contentContainerStyle={{ padding: 16 }}
-    >
+    <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={{ padding: 16 }}>
       <Text style={{ fontSize: 22, fontWeight: '800', color: C.text }}>Gợi ý thực đơn</Text>
-      <Text style={{ color: C.sub, marginTop: 4 }}>
-        Cá nhân hoá theo chiều cao, cân nặng và mục tiêu.
-      </Text>
+      <Text style={{ color: C.sub, marginTop: 4 }}>Cá nhân hoá theo chiều cao, cân nặng và mục tiêu.</Text>
 
       <View style={{ marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-        <Pressable
-          onPress={loadProfile}
-          disabled={fetchingProfile}
-          style={{
-            backgroundColor: fetchingProfile ? '#9ca3af' : C.primary,
-            paddingVertical: 10,
-            paddingHorizontal: 16,
-            borderRadius: 8
-          }}
-        >
-          {fetchingProfile ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={{ color: '#fff', fontWeight: '700' }}>🔄 Làm mới hồ sơ</Text>
-          )}
-        </Pressable>
-
-        <Pressable
-          onPress={() => {
-            setPlan(null);
-            makeSuggest();
-          }}
-          disabled={loading || !hasProfileCore}
-          style={{
-            backgroundColor: loading || !hasProfileCore ? '#9ca3af' : C.success,
-            paddingVertical: 10,
-            paddingHorizontal: 16,
-            borderRadius: 8
-          }}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={{ color: '#fff', fontWeight: '700' }}>✨ Tạo gợi ý</Text>
-          )}
-        </Pressable>
+        <PrimaryButton title="🔄 Làm mới hồ sơ" onPress={loadProfile} disabled={fetchingProfile} />
+        <PrimaryButton title="✨ Tạo gợi ý" onPress={()=>{ setPlan(null); makeSuggest(); }} disabled={loading || !hasProfileCore} tone="success" />
       </View>
 
       {profile && (
-        <View style={{
-          marginTop: 12,
-          backgroundColor: C.card,
-          borderWidth: 1,
-          borderColor: C.b,
-          padding: 12,
-          borderRadius: 10
-        }}>
+        <View style={{ marginTop: 12, backgroundColor: C.card, borderWidth: 1, borderColor: C.b, padding: 12, borderRadius: 12 }}>
           <Text style={{ fontWeight: '700', color: C.text }}>
             Hồ sơ: {profile.display_name || '(Chưa đặt tên)'}
           </Text>
@@ -180,14 +132,7 @@ export default function MealPlanSuggest() {
       )}
 
       {plan && (
-        <View style={{
-          marginTop: 16,
-          backgroundColor: C.card,
-          borderWidth: 1,
-          borderColor: C.b,
-          borderRadius: 10,
-          padding: 12
-        }}>
+        <View style={{ marginTop: 16, backgroundColor: C.card, borderWidth: 1, borderColor: C.b, borderRadius: 12, padding: 12 }}>
           <Text style={{ fontWeight: '700', color: C.text }}>
             🎯 Kế hoạch ngày: {plan.kcal_target} kcal • Goal: {plan.goal}
           </Text>
@@ -195,38 +140,20 @@ export default function MealPlanSuggest() {
             Macro: P {plan.target?.p}g • C {plan.target?.c}g • F {plan.target?.f}g
           </Text>
 
-            {plan.meals.map((m, i) => (
-              <View key={i} style={{ marginTop: 12 }}>
-                <Text style={{ fontWeight: '700', color: C.text }}>{m.name}</Text>
-                {m.items.map((it, idx) => (
-                  <Text
-                    key={idx}
-                    style={{ marginTop: 4, color: C.sub, fontSize: 13 }}
-                  >
-                    • {it.food} ({it.grams}g) – {it.kcal} kcal (P {it.p}g • C {it.c}g • F {it.f}g)
-                  </Text>
-                ))}
-              </View>
-            ))}
+          {plan.meals.map((m, i) => (
+            <View key={i} style={{ marginTop: 12 }}>
+              <Text style={{ fontWeight: '700', color: C.text }}>{m.name}</Text>
+              {m.items.map((it, idx) => (
+                <Text key={idx} style={{ marginTop: 4, color: C.sub, fontSize: 13 }}>
+                  • {it.food} ({it.grams}g) – {it.kcal} kcal (P {it.p}g • C {it.c}g • F {it.f}g)
+                </Text>
+              ))}
+            </View>
+          ))}
 
-          <Pressable
-            onPress={savePlan}
-            disabled={saving}
-            style={{
-              marginTop: 16,
-              backgroundColor: saving ? '#9ca3af' : C.primary,
-              padding: 14,
-              borderRadius: 10
-            }}
-          >
-            {saving ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>
-                💾 Lưu kế hoạch
-              </Text>
-            )}
-          </Pressable>
+          <View style={{ marginTop: 16 }}>
+            <PrimaryButton title={saving ? 'Đang lưu…' : '💾 Lưu kế hoạch'} onPress={savePlan} disabled={saving} />
+          </View>
         </View>
       )}
     </ScrollView>
